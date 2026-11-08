@@ -41,7 +41,19 @@ export interface ExposedWorkflow { name: string; workflow_type: string }
  * `workflow_type` (else `name`). Hosts that know better pass `exposed` or
  * `entryPoints` to `appBackend`.
  */
-export const EXPOSED_PATH = '/api/workflows/types?limit=500&offset=0'
+export const EXPOSED_PAGE = 500
+/**
+ * The organization's compositions, as an end user's types list shows them. The `virtual.` prefix
+ * matters: without it the first pages are the platform's library types, and the entry points
+ * (compositions named `composer-<key>-<app12>`) are never reached.
+ */
+export const exposedPath = (offset = 0) => `/api/workflows/types?prefix=virtual.&limit=${EXPOSED_PAGE}&offset=${offset}`
+export const EXPOSED_PATH = exposedPath(0)
+
+/** Whether a types-list page says more rows follow. */
+export function hasMore(out: unknown): boolean {
+  return isObject(out) && out.has_more === true
+}
 
 export function readExposed(out: unknown): ExposedWorkflow[] {
   const rows = listIn(out, ['workflows', 'items', 'exposed', 'entries'])
@@ -57,15 +69,33 @@ export function readExposed(out: unknown): ExposedWorkflow[] {
   return found
 }
 
-/** The entry points by key, found by name. With `app12`, only that app's. */
+const versionOfType = (type: string) => Number(/@(\d+)$/.exec(type)?.[1] ?? 0)
+
+/**
+ * The entry points by key, found by name. With `app12`, only that app's. When the list holds one
+ * key more than once (versions of the same entry point), the highest `@<version>` wins: it is the
+ * one the app serves.
+ */
 export function findEntryPoints(exposed: ExposedWorkflow[], app12?: string): Partial<Record<EntryPointKey, string>> {
   const out: Partial<Record<EntryPointKey, string>> = {}
   for (const e of exposed) {
     const m = ENTRY_POINT_NAME.exec(e.name)
     if (!m || (app12 && m[2] !== app12.toLowerCase())) continue
-    out[m[1] as EntryPointKey] ??= e.workflow_type
+    const key = m[1] as EntryPointKey
+    const seen = out[key]
+    if (!seen || versionOfType(e.workflow_type) > versionOfType(seen)) out[key] = e.workflow_type
   }
   return out
+}
+
+/** The distinct `<app12>` suffixes of the entry points in a list. */
+export function entryPointApps(exposed: ExposedWorkflow[]): string[] {
+  const apps = new Set<string>()
+  for (const e of exposed) {
+    const m = ENTRY_POINT_NAME.exec(e.name)
+    if (m) apps.add(m[2])
+  }
+  return [...apps].sort()
 }
 
 // ---- Inputs ----
