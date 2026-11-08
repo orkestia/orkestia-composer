@@ -435,6 +435,35 @@ describe('appBackend: schedules and runs', () => {
     expect(c.calls.map((x) => x.type).slice(-3)).toEqual(['schedule.app.pause', 'schedule.app.resume', 'schedule.app.delete'])
   })
 
+  it('goes through the app’s composer-schedule-* entry points when it offers them', async () => {
+    // An end-user token may start only exposed compositions: the verbs themselves are refused.
+    const SCHEDULE_KEYS = ['schedule-list', 'schedule-runs', 'schedule-create', 'schedule-update', 'schedule-pause', 'schedule-resume', 'schedule-delete']
+    const notExposed = () => { throw refused('NOT_EXPOSED_TO_END_USERS') }
+    const step = (key: string, out: Json) => ({ [key.replace(/-/g, '_')]: out }) // the output, nested under the step
+    const c = fakeClient().onGet(/^\/api\/workflows\/types/, () => exposedList([...KEYS, ...SCHEDULE_KEYS]))
+      .on(ep('list'), () => page([lineage('a', 2, 2)]))
+      .on('schedule.app.list', notExposed).on('schedule.app.create', notExposed).on('schedule.app.update', notExposed)
+      .on('schedule.app.pause', notExposed).on('schedule.app.resume', notExposed).on('schedule.app.delete', notExposed)
+      .on('schedule.app.runs', notExposed)
+      .on(ep('schedule-list'), () => step('schedule-list', { schedules: [redacted()], count: 1 }))
+      .on(ep('schedule-create'), () => step('schedule-create', { schedule_uuid: 's3', schedule: redacted({ schedule_uuid: 's3' }) }))
+      .on(ep('schedule-update'), () => step('schedule-update', { schedule_uuid: 's1', schedule: redacted({ interval_seconds: 1800 }), changed_fields: ['interval_seconds'] }))
+      .on(ep('schedule-pause'), () => ({})).on(ep('schedule-resume'), () => ({})).on(ep('schedule-delete'), () => ({}))
+      .on(ep('schedule-runs'), () => step('schedule-runs', { schedule_uuid: 's1', runs: [{ workflow_id: 'wf_s1', status: 'completed', terminal_status: 'success', finished_at: '2026-02-02T09:00:05Z' }], count: 1 }))
+    const backend = appBackend(c)
+    await backend.lineages()
+    expect(await backend.schedules.list([live.workflow_type])).toEqual([expect.objectContaining({ schedule_uuid: 's1', target_workflow_type: live.workflow_type })])
+    expect(await backend.schedules.create(live.workflow_type, 60, 'Digest', {})).toMatchObject({ schedule_uuid: 's3' })
+    expect((await backend.schedules.update('s1', { interval_minutes: 30 })).interval_minutes).toBe(30)
+    await backend.schedules.setActive('s1', false)
+    await backend.schedules.setActive('s1', true)
+    await backend.schedules.remove('s1')
+    expect(c.inputsOf(ep('schedule-create'))).toEqual([{ target_workflow_type: live.workflow_type, name: 'Digest', initial_data: {}, active: true, interval_minutes: 60 }])
+    expect(c.inputsOf(ep('schedule-pause'))).toEqual([{ schedule_uuid: 's1' }])
+    expect(c.inputsOf(ep('schedule-delete'))).toEqual([{ schedule_uuid: 's1' }])
+    expect(c.calls.some((x) => x.type.startsWith('schedule.app.'))).toBe(false)
+  })
+
   it('lists runs from schedules and the ones started here, labelled', async () => {
     const c = scheduled()
     const store = new Map<string, string>()

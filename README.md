@@ -21,7 +21,7 @@ apps a way to let people build them without writing JSON.
 The package is not on npm yet. Install a release tarball from GitHub:
 
 ```bash
-pnpm add https://github.com/orkestia/orkestia-composer/releases/download/v0.1.0/orkestia-composer-0.1.0.tgz
+pnpm add https://github.com/orkestia/orkestia-composer/releases/download/v0.1.1/orkestia-composer-0.1.1.tgz
 ```
 
 The tarball is built and attached by the release workflow for every `v*` tag, so
@@ -107,6 +107,9 @@ newer version, the editor warns first ("Save Anyway" saves over it). Without a
 publish entry point, when the workspace's `capabilities` say so, or after
 `CAPABILITY_REQUIRED`, the editor is read-only (and Run is hidden without
 `run`). The step picker offers only the app's authorable steps.
+Schedules go through the app's `composer-schedule-<verb>-<app12>` entry points
+too; an app enabled before those existed gets them by running its authoring
+enablement again.
 
 Refusals reject with `ComposerError`: `error.code` is one of
 `AUTHORING_NOT_ENABLED`, `CAPABILITY_REQUIRED`, `VERSION_CONFLICT`,
