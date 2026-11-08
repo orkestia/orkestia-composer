@@ -125,6 +125,15 @@ export function appBackend(client: WorkflowsClientLike, options: AppBackendOptio
   const verb = async (type: string, input: Json): Promise<unknown> => {
     try { return await client.run(type, input, timeoutMs) } catch (error) { throw wire.refusalOf(error) }
   }
+  /**
+   * A schedule verb, through the app's `composer-schedule-*` entry point. An app enabled before
+   * those existed has none: the verb is then called by name, which the platform refuses for an
+   * end user (`NOT_EXPOSED_TO_END_USERS`) until the app re-runs its authoring enablement.
+   */
+  const scheduleVerb = async (op: keyof typeof wire.SCHEDULE_VERBS, input: Json): Promise<unknown> => {
+    const key = wire.SCHEDULE_ENTRY_POINTS[op]
+    return (await discover())[key] ? call(key, input) : verb(wire.SCHEDULE_VERBS[op], input)
+  }
 
   const index = (lineages: Lineage[]) => {
     for (const l of lineages) for (const [type, version] of Object.entries(l.versionOf)) typeIndex.set(type, { name: l.name, version })
@@ -193,7 +202,7 @@ export function appBackend(client: WorkflowsClientLike, options: AppBackendOptio
     const wanted = target.version ?? (target.followsHead ? Math.max(...versions.map(([, v]) => v.version)) : null)
     return versions.find(([, v]) => v.version === wanted)?.[0]
   }
-  const rawSchedules = async () => wire.readScheduleList(await verb(wire.SCHEDULE_VERBS.list, { limit: 200 }))
+  const rawSchedules = async () => wire.readScheduleList(await scheduleVerb('list', { limit: 200 }))
   const assertCadence = (cadence: number | Cadence | null) => {
     if (cadence === null) return
     const c: Cadence = typeof cadence === 'number' ? { kind: 'interval', everyMinutes: cadence } : cadence
@@ -209,14 +218,14 @@ export function appBackend(client: WorkflowsClientLike, options: AppBackendOptio
     },
     async create(target, cadence, name, initialData) {
       assertCadence(cadence)
-      return wire.readSchedule(wire.readScheduleOne(await verb(wire.SCHEDULE_VERBS.create, wire.scheduleCreateInput(target, cadence, name, initialData))), typeOfTarget)
+      return wire.readSchedule(wire.readScheduleOne(await scheduleVerb('create', wire.scheduleCreateInput(target, cadence, name, initialData))), typeOfTarget)
     },
     async update(scheduleUuid: string, patch: SchedulePatch) {
       assertCadence(patch.schedule_expression ? { kind: 'cron', expression: patch.schedule_expression, timezone: patch.timezone } : patch.interval_minutes ?? null)
-      return wire.readSchedule(wire.readScheduleOne(await verb(wire.SCHEDULE_VERBS.update, wire.scheduleUpdateInput(scheduleUuid, patch))), typeOfTarget)
+      return wire.readSchedule(wire.readScheduleOne(await scheduleVerb('update', wire.scheduleUpdateInput(scheduleUuid, patch))), typeOfTarget)
     },
-    setActive: (scheduleUuid, active) => verb(active ? wire.SCHEDULE_VERBS.resume : wire.SCHEDULE_VERBS.pause, { schedule_uuid: scheduleUuid }),
-    remove: (scheduleUuid) => verb(wire.SCHEDULE_VERBS.remove, { schedule_uuid: scheduleUuid }),
+    setActive: (scheduleUuid, active) => scheduleVerb(active ? 'resume' : 'pause', { schedule_uuid: scheduleUuid }),
+    remove: (scheduleUuid) => scheduleVerb('remove', { schedule_uuid: scheduleUuid }),
   }
 
   let catalog: PlatformCatalog | null = null
@@ -320,7 +329,7 @@ export function appBackend(client: WorkflowsClientLike, options: AppBackendOptio
       await refreshTracked(mine)
       const scheduled = (await rawSchedules().catch(() => [])).map((raw) => ({ raw, type: typeOfTarget(wire.scheduleTarget(raw)) })).filter((s) => s.type && types.has(s.type))
       const fromSchedules = (await Promise.all(scheduled.map(async ({ raw, type }) =>
-        wire.readScheduleRuns(await verb(wire.SCHEDULE_VERBS.runs, { schedule_uuid: raw.schedule_uuid, limit }).catch(() => ({})), type!)))).flat()
+        wire.readScheduleRuns(await scheduleVerb('runs', { schedule_uuid: raw.schedule_uuid, limit }).catch(() => ({})), type!)))).flat()
       const seen = new Set<string>()
       return [...mine, ...fromSchedules]
         .filter((r) => (seen.has(r.workflow_uuid) ? false : (seen.add(r.workflow_uuid), true)))

@@ -21,13 +21,14 @@ import { ComposerError, REFUSAL_CODES, type ComposerErrorCode, type RefusalCode 
  * for `workspaces` / `workspace-switch` the person's workspaces
  * (`identity.end-user.organization.query` / `.switch`, input renamed `workspace_uuid`).
  */
-export const ENTRY_POINT_KEYS = ['validate', 'list', 'get', 'catalog', 'save-draft', 'publish', 'archive', 'publish-status', 'workspaces', 'workspace-switch'] as const
+export const ENTRY_POINT_KEYS = ['validate', 'list', 'get', 'catalog', 'save-draft', 'publish', 'archive', 'publish-status', 'workspaces', 'workspace-switch',
+  'schedule-list', 'schedule-runs', 'schedule-create', 'schedule-update', 'schedule-pause', 'schedule-resume', 'schedule-delete'] as const
 export type EntryPointKey = (typeof ENTRY_POINT_KEYS)[number]
 /** The entry points every authoring-enabled app has. The workspace ones arrived later (identity v0.80.2), so they are optional. */
 export const AUTHORING_ENTRY_POINT_KEYS: readonly EntryPointKey[] = ['validate', 'list', 'get', 'catalog', 'save-draft', 'publish', 'archive', 'publish-status']
 
 /** `composer-<key>-<app12>`: the names the app's enablement publishes them under. */
-const ENTRY_POINT_NAME = /^composer-(validate|list|get|catalog|save-draft|publish-status|publish|archive|workspace-switch|workspaces)-([0-9a-f]{12})$/
+const ENTRY_POINT_NAME = /^composer-(validate|list|get|catalog|save-draft|publish-status|publish|archive|workspace-switch|workspaces|schedule-(?:list|runs|create|update|pause|resume|delete))-([0-9a-f]{12})$/
 
 /** One workflow the signed-in end user may start, as the app's exposed list names it. */
 export interface ExposedWorkflow { name: string; workflow_type: string }
@@ -407,6 +408,15 @@ export const SCHEDULE_VERBS = {
   list: 'schedule.app.list', runs: 'schedule.app.runs', create: 'schedule.app.create', update: 'schedule.app.update',
   pause: 'schedule.app.pause', resume: 'schedule.app.resume', remove: 'schedule.app.delete',
 } as const
+
+/**
+ * The app's entry point for each schedule verb (`composer-schedule-<verb>-<app12>`). An end-user
+ * token may start only exposed compositions, so the verbs are reached through these wrappers.
+ */
+export const SCHEDULE_ENTRY_POINTS: Record<keyof typeof SCHEDULE_VERBS, EntryPointKey> = {
+  list: 'schedule-list', runs: 'schedule-runs', create: 'schedule-create', update: 'schedule-update',
+  pause: 'schedule-pause', resume: 'schedule-resume', remove: 'schedule-delete',
+}
 
 /** A schedule's target as the redacted row names it: a composition lineage and version, or a workflow type. */
 export interface ScheduleTarget { name: string | null; version: number | null; followsHead: boolean; workflowType: string | null }

@@ -7,6 +7,16 @@ the API: pin a caret range on the minor you tested (`^0.1.0`).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-08
+
+### Fixed
+- `appBackend` schedules now go through the app's `composer-schedule-<verb>-<app12>`
+  entry points (`list`, `runs`, `create`, `update`, `pause`, `resume`, `delete`).
+  An end-user token may start only exposed compositions, so calling
+  `schedule.app.*` by name was refused with `NOT_EXPOSED_TO_END_USERS`. An app
+  gets the entry points by running its authoring enablement again; until then
+  the verbs are still called by name.
+
 ## [0.1.0] - 2026-11-08
 
 ### Added
