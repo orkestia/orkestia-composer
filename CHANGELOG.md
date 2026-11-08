@@ -7,6 +7,18 @@ the API: pin a caret range on the minor you tested (`^0.1.0`).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-08
+
+### Fixed
+- `appBackend` found no entry points against the live platform. It read the
+  first 500 rows of the types list, which are library types; the app's
+  `composer-*` compositions are only reached with the `virtual.` prefix. It now
+  asks for `prefix=virtual.` and follows `has_more` page by page.
+- The types list shows the entry points of every app in the organization. The
+  editor now uses the one app that offers the full authoring set, refuses with
+  `ENTRY_POINT_MISSING` (detail: pass `app12`) when several do, and compares
+  versions of an entry point only within one app (the newest wins).
+
 ## [0.1.1] - 2026-11-08
 
 ### Fixed

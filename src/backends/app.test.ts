@@ -54,6 +54,38 @@ const composition = (slug: string, version: number, extra: Json = {}) => ({
 afterEach(() => setLocale('en'))
 
 describe('appBackend: entry points', () => {
+  it('reads the organization’s compositions from the types list, page by page', async () => {
+    // The live list: without the virtual. prefix its first pages are library types.
+    const first = { workflows: KEYS.slice(0, 4).map((k) => ({ name: ep(k), composition_name: `composer-${k}-${APP}` })), has_more: true }
+    const second = { workflows: KEYS.slice(4).map((k) => ({ name: ep(k), composition_name: `composer-${k}-${APP}` })), has_more: false }
+    const c = fakeClient().onGet(/offset=0$/, () => first).onGet(/offset=500$/, () => second)
+    const found = await appBackend(c).entryPoints()
+    for (const k of KEYS) expect(found[k as keyof typeof found]).toBe(ep(k))
+    expect(c.gets).toEqual([
+      '/api/workflows/types?prefix=virtual.&limit=500&offset=0',
+      '/api/workflows/types?prefix=virtual.&limit=500&offset=500',
+    ])
+  })
+
+  it('refuses to guess between two apps that both offer authoring, and takes app12', async () => {
+    const OTHER = 'fedcba987654'
+    const both = { workflows: [APP, OTHER].flatMap((app) => KEYS.map((k) => ({ name: `virtual.${app}${k.replace(/-/g, '')}@1`.slice(0, 60), composition_name: `composer-${k}-${app}` }))) }
+    await expect(appBackend(fakeClient().onGet(/types/, () => both)).entryPoints()).rejects.toMatchObject({
+      code: 'ENTRY_POINT_MISSING', detail: expect.stringContaining('app12'),
+    })
+    const found = await appBackend(fakeClient().onGet(/types/, () => both), { app12: OTHER }).entryPoints()
+    expect(found.list).toBe(`virtual.${OTHER}list@1`)
+  })
+
+  it('takes the newest version of an entry point the list shows twice', () => {
+    const found = findEntryPoints([
+      { name: `composer-list-${APP}`, workflow_type: 'virtual.aaaa@2' },
+      { name: `composer-list-${APP}`, workflow_type: 'virtual.aaaa@10' },
+      { name: `composer-list-${APP}`, workflow_type: 'virtual.aaaa@1' },
+    ], APP)
+    expect(found.list).toBe('virtual.aaaa@10')
+  })
+
   it('finds them by name in the app’s exposed list', async () => {
     const backend = appBackend(client())
     const found = await backend.entryPoints()

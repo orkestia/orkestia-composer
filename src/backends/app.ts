@@ -18,11 +18,15 @@ import { ComposerError, isComposerError } from './errors'
 import * as wire from './wire'
 
 export interface AppBackendOptions {
-  /** The workflows the app exposes to this person. Default: `GET` the types list (wire.EXPOSED_PATH). */
+  /** The workflows the app exposes to this person. Default: `GET` the organization's compositions from the types list (wire.exposedPath), page by page. */
   exposed?: () => Promise<wire.ExposedWorkflow[]>
   /** Entry-point workflow types by key, when the host already knows them (skips discovery for those). */
   entryPoints?: Partial<Record<wire.EntryPointKey, string>>
-  /** The 12-character app suffix of the entry-point names, when the person sees more than one app's. */
+  /**
+   * The 12-character app suffix of the entry-point names: the first 12 hex characters of the identity
+   * app's uuid. Needed when the organization has more than one app with authoring on: the types list
+   * shows every app's entry points, and the editor refuses to guess.
+   */
   app12?: string
   /** Force what the person may do. Default: what the workspace grants; draft and publish only when the app offers save-draft (and publish). */
   capabilities?: { publish?: boolean; run?: boolean; draft?: boolean }
@@ -87,14 +91,43 @@ export function appBackend(client: WorkflowsClientLike, options: AppBackendOptio
   }
   const grant = (c: wire.WorkspaceCapabilities | null) => { if (c) granted = c }
 
+  /** Every composition the types list shows, a page at a time (at most 20 pages). */
+  const readTypes = async (): Promise<wire.ExposedWorkflow[]> => {
+    if (!client.get) return []
+    const all: wire.ExposedWorkflow[] = []
+    for (let page = 0; page < 20; page++) {
+      const out = await client.get(wire.exposedPath(page * wire.EXPOSED_PAGE))
+      all.push(...wire.readExposed(out))
+      if (!wire.hasMore(out)) break
+    }
+    return all
+  }
+
   const discover = () => {
     discovered ??= (async () => {
       const given = options.entryPoints ?? {}
       if (wire.AUTHORING_ENTRY_POINT_KEYS.every((k) => given[k])) return given
-      const list = options.exposed ? await options.exposed()
-        : client.get ? wire.readExposed(await client.get(wire.EXPOSED_PATH))
-        : []
-      const found = { ...wire.findEntryPoints(list, options.app12), ...given }
+      const list = options.exposed ? await options.exposed() : await readTypes()
+      let app12 = options.app12
+      if (!app12) {
+        // The list shows every app's entry points: use the one app that offers the full authoring
+        // set, and refuse to guess between several.
+        const complete = wire.entryPointApps(list).filter((app) => {
+          const eps = wire.findEntryPoints(list, app)
+          return wire.AUTHORING_ENTRY_POINT_KEYS.every((k) => eps[k])
+        })
+        if (complete.length > 1) {
+          throw new ComposerError('ENTRY_POINT_MISSING', {
+            detail: `entry points of ${complete.length} apps (${complete.join(', ')}): pass appBackend's app12 option`,
+          })
+        }
+        // None complete (an app offering only some actions): the app with the most entry points, so
+        // versions are only ever compared within one app.
+        app12 = complete[0] ?? wire.entryPointApps(list)
+          .map((app) => [app, Object.keys(wire.findEntryPoints(list, app)).length] as const)
+          .sort((x, y) => y[1] - x[1])[0]?.[0]
+      }
+      const found = { ...wire.findEntryPoints(list, app12), ...given }
       offered = { publish: !!(found['save-draft'] && found.publish), draft: !!found['save-draft'] }
       return found
     })().catch((error) => { discovered = null; throw wire.refusalOf(error) })

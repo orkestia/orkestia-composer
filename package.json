@@ -1,6 +1,6 @@
 {
   "name": "@orkestia/composer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Build, check and publish Orkestia compositions: an embeddable React editor, and the pure TypeScript composition model behind it.",
   "license": "MIT",
   "type": "module",

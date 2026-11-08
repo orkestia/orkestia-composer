@@ -21,7 +21,7 @@ apps a way to let people build them without writing JSON.
 The package is not on npm yet. Install a release tarball from GitHub:
 
 ```bash
-pnpm add https://github.com/orkestia/orkestia-composer/releases/download/v0.1.1/orkestia-composer-0.1.1.tgz
+pnpm add https://github.com/orkestia/orkestia-composer/releases/download/v0.1.2/orkestia-composer-0.1.2.tgz
 ```
 
 The tarball is built and attached by the release workflow for every `v*` tag, so
@@ -99,8 +99,11 @@ const app = appBackend(endUserClient)
 ```
 
 `appBackend` finds the app's `composer-<key>-<app12>` entry points by name in
-the list of workflows the app exposes (pass `entryPoints` or `exposed` to skip
-discovery). Saving publishes: each attempt has one idempotency key, kept with
+the organization's compositions (`GET /api/workflows/types?prefix=virtual.`,
+page by page). If more than one app in the organization has authoring on, pass
+`app12`: the first 12 hex characters of your identity app's uuid. Pass
+`entryPoints` (key to `workflow_type`, as `identity.app.enable-authoring`
+returns them) or `exposed` to skip discovery. Saving publishes: each attempt has one idempotency key, kept with
 the draft, so trying again after a timeout never publishes twice; the editor
 checks `publishStatus` before it offers Retry. When someone else published a
 newer version, the editor warns first ("Save Anyway" saves over it). Without a
