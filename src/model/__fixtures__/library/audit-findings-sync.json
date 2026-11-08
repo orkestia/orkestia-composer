@@ -1,0 +1,382 @@
+{
+  "name": "audit-findings-sync",
+  "description": "Run a bounded audit scan, record its metrics, and synchronize every current finding into Tickets.",
+  "version": "1.0.0",
+  "inputs": [
+    {
+      "name": "organization_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Organization whose audit findings, metrics and tickets are reconciled."
+    },
+    {
+      "name": "scan_limit",
+      "type": "integer",
+      "required": false,
+      "description": "Bounded scan size; the scan defaults to and caps at 100."
+    }
+  ],
+  "layers": [
+    {
+      "name": "evaluate",
+      "steps": [
+        {
+          "name": "run_audit_scan",
+          "workflow_type": "example.audit.scan",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "limit": {
+              "source": "input",
+              "field": "scan_limit"
+            },
+            "trigger": {
+              "source": "static",
+              "value": "scheduled"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "observe_and_read",
+      "steps": [
+        {
+          "name": "list_current_run_findings",
+          "workflow_type": "example.audit.list-findings",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "audit_run_uuid": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "audit_run_uuid"
+            },
+            "finding_type": {
+              "source": "static",
+              "value": "example-check"
+            },
+            "include_deleted": {
+              "source": "static",
+              "value": false
+            },
+            "limit": {
+              "source": "static",
+              "value": 500
+            },
+            "offset": {
+              "source": "static",
+              "value": 0
+            }
+          }
+        },
+        {
+          "name": "record_scan_metrics",
+          "workflow_type": "example.metrics.record",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "audit_run_uuid": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "audit_run_uuid"
+            },
+            "contract_version": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "contract_version"
+            },
+            "budget_contract_version": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "budget_contract_version"
+            },
+            "evaluated_at": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "evaluated_at"
+            },
+            "last_evaluated_at": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "last_evaluated_at"
+            },
+            "scanned_deliveries": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "scanned_deliveries"
+            },
+            "returned_deliveries": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "returned_deliveries"
+            },
+            "alert_signals": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "alert_signals"
+            },
+            "eligible_signals": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "eligible_signals"
+            },
+            "good_signals": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "good_signals"
+            },
+            "breached_signals": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "breached_signals"
+            },
+            "unavailable_signals": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "unavailable_signals"
+            },
+            "terminal_successes": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "terminal_successes"
+            },
+            "terminal_failures": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "terminal_failures"
+            },
+            "new_findings": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "new_findings"
+            },
+            "updated_findings": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "updated_findings"
+            },
+            "resolved_findings": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "resolved_findings"
+            },
+            "total_findings": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "total_findings"
+            },
+            "scan_limit": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "scan_limit"
+            },
+            "matched_at_least": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "matched_at_least"
+            },
+            "sli": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "sli"
+            },
+            "burn": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "burn"
+            },
+            "auto_clear_performed": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "auto_clear_performed"
+            },
+            "scan_complete": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "scan_complete"
+            },
+            "truncated": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "truncated"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "require_bounded_finding_page",
+      "steps": [
+        {
+          "name": "guard_all_current_findings_loaded",
+          "workflow_type": "control.flow.guard",
+          "input_mapping": {
+            "a": {
+              "source": "step",
+              "step": "list_current_run_findings",
+              "field": "has_more"
+            },
+            "op": {
+              "source": "static",
+              "value": "eq"
+            },
+            "b": {
+              "source": "static",
+              "value": false
+            },
+            "reason": {
+              "source": "static",
+              "value": "the current audit run has more than 500 findings; ticket sync did not start"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "synchronize_tickets",
+      "steps": [
+        {
+          "name": "sync_current_findings",
+          "workflow_type": "example.tickets.sync-finding",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "expected_audit_run_uuid": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": "audit_run_uuid"
+            },
+            "finding": {
+              "source": "static",
+              "value": {}
+            }
+          },
+          "fan_out": {
+            "source_step": "list_current_run_findings",
+            "source_field": "items",
+            "as": "finding",
+            "on_error": "fail"
+          }
+        }
+      ]
+    },
+    {
+      "name": "merge_receipt",
+      "steps": [
+        {
+          "name": "merge_scan_and_metrics_receipt",
+          "workflow_type": "control.value.merge",
+          "input_mapping": {
+            "base": {
+              "source": "step",
+              "step": "run_audit_scan",
+              "field": ""
+            },
+            "overlay": {
+              "source": "step",
+              "step": "record_scan_metrics",
+              "field": ""
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync_receipt",
+      "steps": [
+        {
+          "name": "build_audit_sync_receipt",
+          "workflow_type": "control.value.build",
+          "input_mapping": {
+            "fields": {
+              "source": "step",
+              "step": "merge_scan_and_metrics_receipt",
+              "field": "result"
+            },
+            "defaults": {
+              "source": "static",
+              "value": {
+                "schema": "example.audit_findings_sync.v1",
+                "finding_list_step": "list_current_run_findings",
+                "finding_page_guard_step": "guard_all_current_findings_loaded",
+                "ticket_sync_step": "sync_current_findings",
+                "ticket_sync_policy": "all current-run findings or fail"
+              }
+            },
+            "drop_null": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "visibility": "public",
+    "domain": "audit",
+    "effect": "scan_record_metrics_and_sync_findings",
+    "provider_blind": true,
+    "registered_dependencies": {
+      "audit-scan": "example.audit.scan",
+      "audit-finding-list": "example.audit.list-findings",
+      "metrics-record": "example.metrics.record",
+      "flow-guard": "control.flow.guard",
+      "ticket-finding-sync": "example.tickets.sync-finding",
+      "value-merge": "control.value.merge",
+      "value-build": "control.value.build"
+    },
+    "schedule_contract": {
+      "cadence_seconds": 300,
+      "overlap_policy": "skip",
+      "trigger": "a schedule, once every dependency is in the catalog",
+      "schedule_is_runtime_state": true
+    },
+    "boundedness": {
+      "scan_max": 100,
+      "finding_page_max": 500,
+      "finding_page_overflow": "hard fail before any ticket synchronization",
+      "ticket_fan_out_on_error": "fail"
+    },
+    "reconciliation_invariants": [
+      "partial scans may add findings but never clear unseen ones",
+      "the current audit run owns the finding rows used for routing",
+      "ticket identity is the finding content hash within the organization",
+      "every current-run finding is synchronized or the composition fails",
+      "metrics are fixed-name gauges without per-object labels"
+    ],
+    "security_boundary": {
+      "provider_credentials_in_composition": false,
+      "organization_scope_source": "workflow context"
+    },
+    "output_contract": {
+      "final_step": "build_audit_sync_receipt.result",
+      "schema": "example.audit_findings_sync.v1",
+      "audit_run_field": "audit_run_uuid",
+      "metric_names_field": "metric_names",
+      "finding_page_step": "list_current_run_findings",
+      "ticket_results_step": "sync_current_findings"
+    },
+    "required_runtime_config": [
+      "a schedule for the organization",
+      "the audit, metrics and tickets workflows in the catalog"
+    ],
+    "failure_modes": [
+      "audit_scan_failed",
+      "audit_finding_page_failed",
+      "audit_finding_page_overflow",
+      "metrics_record_failed",
+      "ticket_sync_validation_failed",
+      "ticket_sync_partial_failure"
+    ]
+  }
+}

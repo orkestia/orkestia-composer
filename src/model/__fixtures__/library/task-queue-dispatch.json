@@ -1,0 +1,194 @@
+{
+  "name": "task-queue-dispatch",
+  "description": "Claim one queued task and dispatch it exactly once through the configured event routes, without passing provider credentials to the recipient.",
+  "version": "1.0.1",
+  "inputs": [
+    {
+      "name": "organization_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Organization that owns the task queue and event routes."
+    },
+    {
+      "name": "task_uuid",
+      "type": "uuid",
+      "required": false,
+      "description": "Optional task to claim; omit for the oldest available one."
+    },
+    {
+      "name": "states",
+      "type": "list",
+      "required": false,
+      "description": "Optional task-state filter for focused workers."
+    }
+  ],
+  "layers": [
+    {
+      "name": "claim",
+      "steps": [
+        {
+          "name": "claim_next_task",
+          "workflow_type": "example.tasks.claim-next",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "owner_uuid": {
+              "source": "static",
+              "value": "task-queue-dispatcher-v1"
+            },
+            "idempotency_key": {
+              "source": "static",
+              "value": "task-queue-dispatch-tick-v1"
+            },
+            "task_uuid": {
+              "source": "input",
+              "field": "task_uuid"
+            },
+            "states": {
+              "source": "input",
+              "field": "states"
+            },
+            "lease_seconds": {
+              "source": "static",
+              "value": 300
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "decide_dispatch",
+      "steps": [
+        {
+          "name": "compare_task_available",
+          "workflow_type": "control.predicate.compare",
+          "input_mapping": {
+            "a": {
+              "source": "step",
+              "step": "claim_next_task",
+              "field": "available"
+            },
+            "op": {
+              "source": "static",
+              "value": "eq"
+            },
+            "b": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "dispatch",
+      "steps": [
+        {
+          "name": "dispatch_claimed_task",
+          "workflow_type": "example.events.dispatch",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "source": {
+              "source": "static",
+              "value": "example.tasks"
+            },
+            "event_type": {
+              "source": "static",
+              "value": "action-required"
+            },
+            "action": {
+              "source": "step",
+              "step": "claim_next_task",
+              "field": "claim.action"
+            },
+            "delivery_ref": {
+              "source": "step",
+              "step": "claim_next_task",
+              "field": "claim.claim_uuid"
+            },
+            "payload": {
+              "source": "step",
+              "step": "claim_next_task",
+              "field": "claim.task"
+            },
+            "metadata": {
+              "source": "step",
+              "step": "claim_next_task",
+              "field": "claim"
+            },
+            "max_dispatches": {
+              "source": "static",
+              "value": 1
+            },
+            "respect_capacity": {
+              "source": "static",
+              "value": true
+            },
+            "child_start_timeout_seconds": {
+              "source": "static",
+              "value": 60
+            }
+          },
+          "condition": {
+            "step": "compare_task_available",
+            "field": "result",
+            "op": "truthy"
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "visibility": "public",
+    "domain": "tasks",
+    "effect": "claim_one_task_and_dispatch_event",
+    "provider_blind": true,
+    "registered_dependencies": {
+      "claim-next": "example.tasks.claim-next",
+      "predicate-compare": "control.predicate.compare",
+      "event-dispatch": "example.events.dispatch"
+    },
+    "event_contract": {
+      "source_default": "example.tasks",
+      "event_type_default": "action-required",
+      "action_field": "claim.action",
+      "delivery_ref_field": "claim.claim_uuid",
+      "payload_field": "claim.task",
+      "metadata_field": "claim"
+    },
+    "idempotency_invariants": [
+      "claim-next selects one oldest available task",
+      "the same owner and key recover the same live claim",
+      "delivery_ref equals claim_uuid so a retry cannot dispatch the task twice",
+      "a state change clears the claim",
+      "an expired lease lets a new claim recover the task"
+    ],
+    "recovery_boundary": {
+      "claim_lease_seconds": 300,
+      "busy_behavior": "the recipient answers retry_later",
+      "fresh_work_behavior": "the recipient starts the task"
+    },
+    "security_boundary": {
+      "provider_credentials_in_payload": false,
+      "recipient_selects_provider_connection": false
+    },
+    "action_routes": {
+      "start_task": "worker",
+      "review_result": "reviewer",
+      "publish_result": "publisher",
+      "reconcile_blocker": "coordinator"
+    },
+    "failure_modes": [
+      "claim_failed",
+      "event_dispatch_failed",
+      "no_matching_route",
+      "capacity_deferred",
+      "claim_expired_before_completion"
+    ]
+  }
+}

@@ -1,0 +1,244 @@
+{
+  "name": "customer-records-sync",
+  "description": "Import one page of billing customers into the records store and advance the sync cursor. Does not filter by email.",
+  "version": "1.0.0",
+  "inputs": [
+    {
+      "name": "organization_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Organization that owns the billing connection and the stored records."
+    },
+    {
+      "name": "billing_connection_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Billing connection UUID, passed in. The composition does not look one up."
+    },
+    {
+      "name": "limit",
+      "type": "integer",
+      "required": false,
+      "description": "Page size 1–100. Omit to use the provider default."
+    },
+    {
+      "name": "starting_after",
+      "type": "string",
+      "required": false,
+      "description": "Pagination cursor (a customer_id). Omit for the first page."
+    }
+  ],
+  "layers": [
+    {
+      "name": "list",
+      "steps": [
+        {
+          "name": "list_customers",
+          "workflow_type": "example.billing.list-customers",
+          "input_mapping": {
+            "connection_uuid": {
+              "source": "input",
+              "field": "billing_connection_uuid"
+            },
+            "limit": {
+              "source": "input",
+              "field": "limit"
+            },
+            "starting_after": {
+              "source": "input",
+              "field": "starting_after"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "persist",
+      "steps": [
+        {
+          "name": "persist_customers",
+          "workflow_type": "example.records.persist-batch",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "connection_uuid": {
+              "source": "input",
+              "field": "billing_connection_uuid"
+            },
+            "provider": {
+              "source": "static",
+              "value": "example-billing"
+            },
+            "entity_type": {
+              "source": "static",
+              "value": "customer"
+            },
+            "items": {
+              "source": "step",
+              "step": "list_customers",
+              "field": "customers"
+            },
+            "external_ref_field": {
+              "source": "static",
+              "value": "customer_id"
+            }
+          }
+        },
+        {
+          "name": "stamp_synced_at",
+          "workflow_type": "control.time.now",
+          "input_mapping": {
+            "format": {
+              "source": "static",
+              "value": "iso8601"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "cursor",
+      "steps": [
+        {
+          "name": "upsert_customer_cursor",
+          "workflow_type": "example.records.sync-cursor.upsert",
+          "input_mapping": {
+            "connection_uuid": {
+              "source": "input",
+              "field": "billing_connection_uuid"
+            },
+            "provider": {
+              "source": "static",
+              "value": "example-billing"
+            },
+            "entity_type": {
+              "source": "static",
+              "value": "customer"
+            },
+            "last_synced_at": {
+              "source": "step",
+              "step": "stamp_synced_at",
+              "field": "iso8601"
+            },
+            "items_synced_total": {
+              "source": "step",
+              "step": "persist_customers",
+              "field": "persisted_count"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "merge_evidence",
+      "steps": [
+        {
+          "name": "merge_list_and_persist",
+          "workflow_type": "control.value.merge",
+          "input_mapping": {
+            "base": {
+              "source": "step",
+              "step": "list_customers",
+              "field": ""
+            },
+            "overlay": {
+              "source": "step",
+              "step": "persist_customers",
+              "field": ""
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "snapshot",
+      "steps": [
+        {
+          "name": "build_customer_sync",
+          "workflow_type": "control.value.merge",
+          "input_mapping": {
+            "base": {
+              "source": "static",
+              "value": {
+                "schema": "example.customer_records_sync.v1",
+                "provider": "example-billing",
+                "entity_type": "customer",
+                "external_ref_field": "customer_id",
+                "join_policy": "declared_ids_only",
+                "forbidden_join_fields": [
+                  "email"
+                ]
+              }
+            },
+            "overlay": {
+              "source": "step",
+              "step": "merge_list_and_persist",
+              "field": "result"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "visibility": "public",
+    "domain": "records",
+    "effect": "import_one_customer_page",
+    "identity_policy": {
+      "hub": "organization_uuid",
+      "join_policy": "declared_ids_only",
+      "forbidden_join_fields": [
+        "email"
+      ],
+      "required_declared_ids": [
+        "organization_uuid",
+        "billing_connection_uuid"
+      ]
+    },
+    "row_contract": {
+      "customers": {
+        "required": [
+          "customer_id"
+        ]
+      }
+    },
+    "registered_dependencies": {
+      "list": "example.billing.list-customers",
+      "persist": "example.records.persist-batch",
+      "cursor": "example.records.sync-cursor.upsert",
+      "now": "control.time.now",
+      "merge": "control.value.merge"
+    },
+    "output_contract": {
+      "schema": "example.customer_records_sync.v1",
+      "customers_step": "list_customers.customers",
+      "persist_step": "persist_customers",
+      "cursor_step": "upsert_customer_cursor",
+      "result_step": "build_customer_sync.result"
+    },
+    "replaces_hardcoding": [
+      "per-caller customer import into the records store",
+      "email-filtered customer sync treated as identity"
+    ],
+    "required_runtime_config": [
+      "organization UUID",
+      "billing connection UUID",
+      "a records store for the organization"
+    ],
+    "failure_modes": [
+      "missing_billing_connection",
+      "customer_list_failed",
+      "records_persist_failed",
+      "records_store_unconfigured",
+      "sync_cursor_upsert_failed"
+    ],
+    "composition_policy": {
+      "mutation": "example.records.persist-batch",
+      "bulk_sync_allowed": false,
+      "email_filter": false,
+      "external_ref_field": "customer_id"
+    }
+  }
+}

@@ -1,0 +1,134 @@
+{
+  "name": "version-select-latest",
+  "description": "Select the latest comparable version from candidate strings or rows and compute current-version lag evidence.",
+  "version": "1.0.0",
+  "inputs": [
+    {
+      "name": "versions",
+      "type": "list",
+      "required": true,
+      "description": "List of candidate version strings or row objects."
+    },
+    {
+      "name": "current_version",
+      "type": "string",
+      "required": false,
+      "description": "Optional current pinned/tagged version to compare against candidates."
+    },
+    {
+      "name": "version_field",
+      "type": "string",
+      "required": false,
+      "description": "Optional dotted path to the version value when candidate items are objects."
+    },
+    {
+      "name": "include_prereleases",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether prerelease candidates are eligible for latest selection."
+    },
+    {
+      "name": "strict_candidates",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether skipped candidate versions should fail the workflow."
+    },
+    {
+      "name": "strict_current",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether an invalid current_version should fail the workflow."
+    }
+  ],
+  "layers": [
+    {
+      "name": "select",
+      "steps": [
+        {
+          "name": "select_latest_version",
+          "workflow_type": "control.version.select_latest",
+          "input_mapping": {
+            "versions": {
+              "source": "input",
+              "field": "versions"
+            },
+            "current_version": {
+              "source": "input",
+              "field": "current_version"
+            },
+            "version_field": {
+              "source": "input",
+              "field": "version_field"
+            },
+            "include_prereleases": {
+              "source": "input",
+              "field": "include_prereleases"
+            },
+            "strict_candidates": {
+              "source": "input",
+              "field": "strict_candidates"
+            },
+            "strict_current": {
+              "source": "input",
+              "field": "strict_current"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "evidence",
+      "steps": [
+        {
+          "name": "build_version_evidence",
+          "workflow_type": "control.value.build",
+          "input_mapping": {
+            "fields": {
+              "source": "step",
+              "step": "select_latest_version",
+              "field": "result"
+            },
+            "defaults": {
+              "source": "static",
+              "value": {
+                "schema": "version.select_latest.v1",
+                "evidence_source": "control.version.select_latest"
+              }
+            },
+            "drop_null": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "visibility": "public",
+    "domain": "control",
+    "effect": "rank_versions",
+    "version_contract": {
+      "ordering": "PEP 440 via control.version.select_latest",
+      "default_candidate_fields": [
+        "version",
+        "package_version",
+        "tag",
+        "name"
+      ]
+    },
+    "replaces_hardcoding": [
+      "per-caller latest-version selection from candidate version rows",
+      "per-caller ahead-count calculation for current pinned versions"
+    ],
+    "required_runtime_config": [
+      "Candidate versions from a prior provider/query workflow or explicit input",
+      "Optional current version and version_field"
+    ],
+    "failure_modes": [
+      "empty_candidate_versions",
+      "invalid_candidate_version_when_strict",
+      "invalid_current_version_when_strict"
+    ]
+  }
+}

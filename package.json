@@ -1,0 +1,91 @@
+{
+  "name": "@orkestia/composer",
+  "version": "0.1.0",
+  "description": "Build, check and publish Orkestia compositions: an embeddable React editor, and the pure TypeScript composition model behind it.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orkestia/orkestia-composer.git"
+  },
+  "homepage": "https://github.com/orkestia/orkestia-composer#readme",
+  "bugs": "https://github.com/orkestia/orkestia-composer/issues",
+  "keywords": [
+    "orkestia",
+    "workflow",
+    "composition",
+    "editor",
+    "low-code",
+    "react"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./model": {
+      "types": "./dist/model/index.d.ts",
+      "import": "./dist/model.js"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.8",
+    "@types/dagre": "^0.7.52",
+    "@types/node": "^24.12.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "jsdom": "^31.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.16",
+    "vite-plugin-dts": "^4.5.4",
+    "vitest": "^4.1.11"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.model.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "vite build",
+    "dev": "vite --config vite.config.harness.ts"
+  },
+  "packageManager": "pnpm@11.9.0",
+  "dependencies": {
+    "@xyflow/react": "^12.10.2",
+    "dagre": "^0.8.5"
+  }
+}

@@ -1,0 +1,471 @@
+{
+  "name": "dependency-pin-plan",
+  "description": "Read a repository's dependency file and build recipe, parse fixed package pins, and return deterministic planning evidence.",
+  "version": "1.0.0",
+  "inputs": [
+    {
+      "name": "organization_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Organization context for GitHub file reads."
+    },
+    {
+      "name": "owner",
+      "type": "string",
+      "required": true,
+      "description": "GitHub repository owner."
+    },
+    {
+      "name": "repo",
+      "type": "string",
+      "required": true,
+      "description": "GitHub repository name."
+    },
+    {
+      "name": "requirements_path",
+      "type": "string",
+      "required": true,
+      "description": "Requirements-style dependency file path relative to the repository root."
+    },
+    {
+      "name": "dockerfile_path",
+      "type": "string",
+      "required": true,
+      "description": "Dockerfile or build recipe path relative to the repository root."
+    },
+    {
+      "name": "dockerfile_requirements_pattern",
+      "type": "string",
+      "required": true,
+      "description": "Regex that must match the build recipe reference to the dependency file."
+    },
+    {
+      "name": "approved_target_rows",
+      "type": "list",
+      "required": true,
+      "description": "Approved target rows with package and target_version fields; pass [] when no approved updates are available."
+    },
+    {
+      "name": "max_update_rows",
+      "type": "integer",
+      "required": false,
+      "description": "Optional maximum approved target rows to convert into patch operations."
+    },
+    {
+      "name": "ref",
+      "type": "string",
+      "required": false,
+      "description": "Optional GitHub branch, tag, or commit SHA used for both file reads."
+    },
+    {
+      "name": "missing_ok",
+      "type": "boolean",
+      "required": false,
+      "description": "Optional GitHub read behavior for controlled bootstrap or dry-run cases."
+    },
+    {
+      "name": "default_requirements_content",
+      "type": "string",
+      "required": false,
+      "description": "Requirements content used only when missing_ok handles a missing dependency file."
+    },
+    {
+      "name": "default_dockerfile_content",
+      "type": "string",
+      "required": false,
+      "description": "Dockerfile content used only when missing_ok handles a missing build recipe."
+    }
+  ],
+  "layers": [
+    {
+      "name": "read_sources",
+      "steps": [
+        {
+          "name": "read_requirements_file",
+          "workflow_type": "github.code.get_file",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "owner": {
+              "source": "input",
+              "field": "owner"
+            },
+            "repo": {
+              "source": "input",
+              "field": "repo"
+            },
+            "path": {
+              "source": "input",
+              "field": "requirements_path"
+            },
+            "ref": {
+              "source": "input",
+              "field": "ref"
+            },
+            "missing_ok": {
+              "source": "input",
+              "field": "missing_ok"
+            },
+            "default_content": {
+              "source": "input",
+              "field": "default_requirements_content"
+            }
+          }
+        },
+        {
+          "name": "read_dockerfile",
+          "workflow_type": "github.code.get_file",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "owner": {
+              "source": "input",
+              "field": "owner"
+            },
+            "repo": {
+              "source": "input",
+              "field": "repo"
+            },
+            "path": {
+              "source": "input",
+              "field": "dockerfile_path"
+            },
+            "ref": {
+              "source": "input",
+              "field": "ref"
+            },
+            "missing_ok": {
+              "source": "input",
+              "field": "missing_ok"
+            },
+            "default_content": {
+              "source": "input",
+              "field": "default_dockerfile_content"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "analyze_sources",
+      "steps": [
+        {
+          "name": "parse_requirements_pins",
+          "workflow_type": "virtual.00000000000000000000000000000001@1",
+          "input_mapping": {
+            "requirements_text": {
+              "source": "step",
+              "step": "read_requirements_file",
+              "field": "content"
+            }
+          }
+        },
+        {
+          "name": "extract_dockerfile_requirements_reference",
+          "workflow_type": "control.text.extract_matches",
+          "input_mapping": {
+            "text": {
+              "source": "step",
+              "step": "read_dockerfile",
+              "field": "content"
+            },
+            "pattern": {
+              "source": "input",
+              "field": "dockerfile_requirements_pattern"
+            },
+            "multiline": {
+              "source": "static",
+              "value": true
+            },
+            "strip_values": {
+              "source": "static",
+              "value": true
+            },
+            "drop_empty": {
+              "source": "static",
+              "value": true
+            },
+            "include_match": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "require_reference",
+      "steps": [
+        {
+          "name": "guard_dockerfile_references_requirements",
+          "workflow_type": "control.flow.guard",
+          "input_mapping": {
+            "a": {
+              "source": "step",
+              "step": "extract_dockerfile_requirements_reference",
+              "field": "count"
+            },
+            "op": {
+              "source": "static",
+              "value": "gt"
+            },
+            "b": {
+              "source": "static",
+              "value": 0
+            },
+            "reason": {
+              "source": "static",
+              "value": "build recipe must reference the configured dependency file before a dependency plan can continue"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "select_updates",
+      "steps": [
+        {
+          "name": "select_approved_target_rows",
+          "workflow_type": "control.collection.slice",
+          "input_mapping": {
+            "items": {
+              "source": "input",
+              "field": "approved_target_rows"
+            },
+            "offset": {
+              "source": "static",
+              "value": 0
+            },
+            "limit": {
+              "source": "input",
+              "field": "max_update_rows"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "build_patch_operations",
+      "steps": [
+        {
+          "name": "build_requirement_update_operations",
+          "workflow_type": "virtual.00000000000000000000000000000002@3",
+          "input_mapping": {
+            "target_row": {
+              "source": "static",
+              "value": {
+                "package": "__dry_run_package__",
+                "target_version": "0.0.0"
+              }
+            }
+          },
+          "fan_out": {
+            "source_step": "select_approved_target_rows",
+            "source_field": "result",
+            "as": "target_row",
+            "on_error": "fail"
+          }
+        }
+      ]
+    },
+    {
+      "name": "count_patch_operations",
+      "steps": [
+        {
+          "name": "count_patch_operation_text",
+          "workflow_type": "control.collection.reduce",
+          "input_mapping": {
+            "items": {
+              "source": "step",
+              "step": "select_approved_target_rows",
+              "field": "result"
+            },
+            "op": {
+              "source": "static",
+              "value": "count"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "build_patch_plan",
+      "steps": [
+        {
+          "name": "build_dependency_patch_plan_evidence",
+          "workflow_type": "control.value.build",
+          "input_mapping": {
+            "fields": {
+              "source": "step",
+              "step": "count_patch_operation_text",
+              "field": ""
+            },
+            "defaults": {
+              "source": "static",
+              "value": {
+                "schema": "example.dependency_patch_plan.v1",
+                "operation_schema": "requirements.fixed_pin_update_operation.v1",
+                "requirements_path_input": "requirements_path",
+                "approved_target_rows_input": "approved_target_rows",
+                "patch_operation_count_step": "count_patch_operation_text",
+                "patch_operation_step": "build_requirement_update_operations",
+                "patch_operation_output_path": "build_requirement_update_operations[*].build_patch_operation_text.result",
+                "patch_operation_count_source": "select_approved_target_rows.result"
+              }
+            },
+            "drop_null": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "merge_evidence",
+      "steps": [
+        {
+          "name": "merge_pin_and_reference_evidence",
+          "workflow_type": "control.value.merge",
+          "input_mapping": {
+            "base": {
+              "source": "step",
+              "step": "parse_requirements_pins",
+              "field": ""
+            },
+            "overlay": {
+              "source": "step",
+              "step": "extract_dockerfile_requirements_reference",
+              "field": ""
+            },
+            "deep": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "build_plan",
+      "steps": [
+        {
+          "name": "build_dependency_plan_evidence",
+          "workflow_type": "control.value.build",
+          "input_mapping": {
+            "fields": {
+              "source": "step",
+              "step": "merge_pin_and_reference_evidence",
+              "field": "result"
+            },
+            "defaults": {
+              "source": "static",
+              "value": {
+                "schema": "example.dependency_plan.v1",
+                "requirements_source_step": "read_requirements_file",
+                "dockerfile_source_step": "read_dockerfile",
+                "pin_parser_step": "parse_requirements_pins",
+                "dockerfile_reference_step": "extract_dockerfile_requirements_reference",
+                "reference_guard_step": "guard_dockerfile_references_requirements",
+                "planner_policy": "fixed dependency pins only; no floating latest tags or branch refs"
+              }
+            },
+            "drop_null": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "visibility": "public",
+    "domain": "deployment",
+    "effect": "read_github_parse_dependencies_build_plan_evidence",
+    "source_contract": {
+      "provider": "github",
+      "requirements_content": "requirements-style fixed package==version text",
+      "build_recipe_content": "Dockerfile or build recipe text",
+      "requirements_path_input": "requirements_path",
+      "dockerfile_path_input": "dockerfile_path",
+      "reference_pattern_input": "dockerfile_requirements_pattern"
+    },
+    "registered_dependencies": {
+      "requirements-fixed-pin-rows": "virtual.00000000000000000000000000000001@1",
+      "github-file-read": "github.code.get_file",
+      "dockerfile-reference-parser": "control.text.extract_matches",
+      "dockerfile-reference-guard": "control.flow.guard",
+      "requirements-fixed-pin-update-operation": "virtual.00000000000000000000000000000002@3",
+      "collection-slice": "control.collection.slice",
+      "collection-reduce": "control.collection.reduce",
+      "value-build": "control.value.build"
+    },
+    "output_contract": {
+      "source_requirements_step": "read_requirements_file",
+      "source_dockerfile_step": "read_dockerfile",
+      "pin_rows_step": "parse_requirements_pins",
+      "dockerfile_reference_step": "extract_dockerfile_requirements_reference",
+      "plan_evidence_step": "build_dependency_plan_evidence.result",
+      "patch_operations_step": "build_requirement_update_operations[*].build_patch_operation_text.result",
+      "patch_operation_count_step": "count_patch_operation_text.value",
+      "patch_plan_step": "build_dependency_patch_plan_evidence.result"
+    },
+    "replaces_hardcoding": [
+      "per-caller GitHub file reads for dependency planning",
+      "per-caller parsing of requirements-style fixed dependency pins",
+      "per-caller checks that a build recipe references the configured dependency input",
+      "per-caller construction of requirements update operations from approved target rows",
+      "per-caller counting and packaging of dependency patch-plan evidence"
+    ],
+    "required_runtime_config": [
+      "GitHub owner/repo/ref",
+      "requirements dependency file path",
+      "Dockerfile or build recipe path",
+      "regex that proves the build recipe references the dependency file",
+      "approved target rows with package and target_version, or [] when no updates are approved",
+      "optional maximum approved target row count for bounded patch planning"
+    ],
+    "failure_modes": [
+      "dependency_file_missing_or_unreadable",
+      "build_recipe_missing_or_unreadable",
+      "requirements_parse_failed",
+      "build_recipe_reference_missing",
+      "invalid_reference_regex",
+      "malformed_approved_target_row",
+      "patch_operation_build_failed"
+    ],
+    "composition_policy": {
+      "mutation_allowed": false,
+      "normal_path_single_surface": true,
+      "guards": [
+        "extract_dockerfile_requirements_reference.count gt 0"
+      ]
+    },
+    "row_contracts": {
+      "parsed_requirement_rows": {
+        "required": [
+          "package",
+          "package_version"
+        ]
+      },
+      "approved_target_rows": {
+        "required": [
+          "package",
+          "target_version"
+        ]
+      }
+    },
+    "fan_out_policy": {
+      "source_step": "select_approved_target_rows.result",
+      "operation_step": "build_requirement_update_operations",
+      "operation_output_path": "build_patch_operation_text.result",
+      "on_error": "fail",
+      "dry_run_target_row_fallback": "neutral schema-only value overwritten by fan_out.as at runtime"
+    }
+  }
+}

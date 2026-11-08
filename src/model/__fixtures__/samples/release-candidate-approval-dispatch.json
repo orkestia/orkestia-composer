@@ -1,0 +1,271 @@
+{
+  "name": "release-candidate-approval-dispatch",
+  "description": "Ask in Slack whether to launch a release from a candidate tag, then dispatch exactly one event after approval.",
+  "version": "1.0.0",
+  "inputs": [
+    {
+      "name": "organization_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Organization that owns the Slack connection and event routes."
+    },
+    {
+      "name": "connection_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Slack connection UUID."
+    },
+    {
+      "name": "channel",
+      "type": "string",
+      "required": true,
+      "description": "Slack approval channel name or id, usually the deployment prompt channel."
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "required": true,
+      "description": "Approval question for the release candidate."
+    },
+    {
+      "name": "note",
+      "type": "string",
+      "required": false,
+      "description": "Optional tag/repository evidence summary."
+    },
+    {
+      "name": "delivery_ref",
+      "type": "string",
+      "required": true,
+      "description": "Deduplication key from the upstream tag/release event."
+    },
+    {
+      "name": "payload",
+      "type": "json",
+      "required": true,
+      "description": "Release request payload, such as repository, ref, tag, artifact family, package, registry, and evidence hints."
+    },
+    {
+      "name": "metadata",
+      "type": "json",
+      "required": false,
+      "description": "Additional audit/correlation metadata."
+    },
+    {
+      "name": "recipient_uuid",
+      "type": "string",
+      "required": false,
+      "description": "Optional recipient UUID. Omit to use the configured event routes."
+    },
+    {
+      "name": "timeout_seconds",
+      "type": "integer",
+      "required": false,
+      "description": "Optional approval expiration timeout."
+    }
+  ],
+  "layers": [
+    {
+      "name": "resolve",
+      "steps": [
+        {
+          "name": "resolve_channel",
+          "workflow_type": "slack.channel.resolve",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "connection_uuid": {
+              "source": "input",
+              "field": "connection_uuid"
+            },
+            "channel": {
+              "source": "input",
+              "field": "channel"
+            },
+            "allow_dm": {
+              "source": "static",
+              "value": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "approval",
+      "steps": [
+        {
+          "name": "request_approval",
+          "workflow_type": "slack.approval.request",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "connection_uuid": {
+              "source": "input",
+              "field": "connection_uuid"
+            },
+            "channel": {
+              "source": "step",
+              "step": "resolve_channel",
+              "field": "channel"
+            },
+            "prompt": {
+              "source": "input",
+              "field": "prompt"
+            },
+            "note": {
+              "source": "input",
+              "field": "note"
+            },
+            "approve_label": {
+              "source": "static",
+              "value": "Launch release"
+            },
+            "reject_label": {
+              "source": "static",
+              "value": "Refuse"
+            },
+            "timeout_seconds": {
+              "source": "input",
+              "field": "timeout_seconds"
+            },
+            "metadata": {
+              "source": "input",
+              "field": "metadata"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "dispatch",
+      "steps": [
+        {
+          "name": "dispatch_release_request",
+          "workflow_type": "example.events.dispatch",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "source": {
+              "source": "static",
+              "value": "deployment.composition"
+            },
+            "event_type": {
+              "source": "static",
+              "value": "deployment.release_requested"
+            },
+            "action": {
+              "source": "static",
+              "value": "approved"
+            },
+            "delivery_ref": {
+              "source": "input",
+              "field": "delivery_ref"
+            },
+            "payload": {
+              "source": "input",
+              "field": "payload"
+            },
+            "metadata": {
+              "source": "input",
+              "field": "metadata"
+            },
+            "recipient_uuid": {
+              "source": "input",
+              "field": "recipient_uuid"
+            },
+            "max_dispatches": {
+              "source": "static",
+              "value": 1
+            },
+            "respect_capacity": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "receipt",
+      "steps": [
+        {
+          "name": "build_receipt",
+          "workflow_type": "control.value.build",
+          "input_mapping": {
+            "fields": {
+              "source": "step",
+              "step": "dispatch_release_request",
+              "field": ""
+            },
+            "defaults": {
+              "source": "static",
+              "value": {
+                "schema": "example.dispatch_receipt.v1",
+                "decision": "complete",
+                "reason": "approval accepted and deployment.release_requested dispatched",
+                "continuation": {
+                  "mode": "none",
+                  "next_input": {},
+                  "next_workflow_type": null,
+                  "next_workflow_input": null
+                },
+                "evidence": {
+                  "approval": "accepted",
+                  "dispatched_event": "deployment.release_requested"
+                },
+                "retry_after_seconds": null
+              }
+            },
+            "drop_null": {
+              "source": "static",
+              "value": false
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "visibility": "public",
+    "domain": "deployment",
+    "effect": "human_approval_then_event_dispatch",
+    "replaces_hardcoding": [
+      "a manual check on every tag push",
+      "duplicate release-candidate dispatches"
+    ],
+    "required_runtime_config": [
+      "slack connection uuid",
+      "approval channel",
+      "an event route for deployment.release_requested"
+    ],
+    "safety": {
+      "max_dispatches": 1,
+      "requires_human_approval": true,
+      "respects_capacity": true
+    },
+    "notes": [
+      "The dispatcher dedupes on delivery_ref.",
+      "If the approval is refused or expires, the dispatch layer should not complete successfully.",
+      "The final receipt layer builds the receipt returned to the caller."
+    ],
+    "receipt_output": {
+      "schema": "example.dispatch_receipt.v1",
+      "path": "build_receipt.result",
+      "producer_step": "build_receipt",
+      "required_fields": [
+        "schema",
+        "decision",
+        "reason",
+        "continuation",
+        "evidence",
+        "retry_after_seconds"
+      ]
+    }
+  }
+}

@@ -1,0 +1,247 @@
+{
+  "name": "package-rows-lag-summary",
+  "description": "Fan out normalized package rows through a latest-version check per row and aggregate a deterministic lag summary.",
+  "version": "1.0.0",
+  "inputs": [
+    {
+      "name": "organization_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Organization that owns the package registry connection."
+    },
+    {
+      "name": "connection_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Package registry connection UUID."
+    },
+    {
+      "name": "region",
+      "type": "string",
+      "required": false,
+      "description": "Optional region override."
+    },
+    {
+      "name": "domain",
+      "type": "string",
+      "required": true,
+      "description": "Registry domain name."
+    },
+    {
+      "name": "domain_owner",
+      "type": "string",
+      "required": false,
+      "description": "Optional account id that owns the domain."
+    },
+    {
+      "name": "repository",
+      "type": "string",
+      "required": true,
+      "description": "Registry repository name."
+    },
+    {
+      "name": "format",
+      "type": "string",
+      "required": true,
+      "description": "Package format, such as pypi, npm, maven, nuget, generic, or cargo."
+    },
+    {
+      "name": "namespace",
+      "type": "string",
+      "required": false,
+      "description": "Optional package namespace override for package formats that require it."
+    },
+    {
+      "name": "package_rows",
+      "type": "list",
+      "required": true,
+      "description": "Normalized package rows with package and package_version fields."
+    },
+    {
+      "name": "max_rows",
+      "type": "integer",
+      "required": false,
+      "description": "Optional maximum number of rows to scan from the input list."
+    },
+    {
+      "name": "include_prereleases",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether prerelease candidate versions are eligible for latest selection."
+    },
+    {
+      "name": "strict_candidates",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether skipped candidate versions should fail per-row checks."
+    },
+    {
+      "name": "strict_current",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether an invalid current package_version should fail per-row checks."
+    }
+  ],
+  "layers": [
+    {
+      "name": "rows",
+      "steps": [
+        {
+          "name": "select_package_rows",
+          "workflow_type": "control.collection.slice",
+          "input_mapping": {
+            "items": {
+              "source": "input",
+              "field": "package_rows"
+            },
+            "offset": {
+              "source": "static",
+              "value": 0
+            },
+            "limit": {
+              "source": "input",
+              "field": "max_rows"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "check",
+      "steps": [
+        {
+          "name": "check_package_row_latest_version",
+          "workflow_type": "virtual.00000000000000000000000000000005@2",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "connection_uuid": {
+              "source": "input",
+              "field": "connection_uuid"
+            },
+            "region": {
+              "source": "input",
+              "field": "region"
+            },
+            "domain": {
+              "source": "input",
+              "field": "domain"
+            },
+            "domain_owner": {
+              "source": "input",
+              "field": "domain_owner"
+            },
+            "repository": {
+              "source": "input",
+              "field": "repository"
+            },
+            "format": {
+              "source": "input",
+              "field": "format"
+            },
+            "namespace": {
+              "source": "input",
+              "field": "namespace"
+            },
+            "include_prereleases": {
+              "source": "input",
+              "field": "include_prereleases"
+            },
+            "strict_candidates": {
+              "source": "input",
+              "field": "strict_candidates"
+            },
+            "strict_current": {
+              "source": "input",
+              "field": "strict_current"
+            },
+            "package_row": {
+              "source": "static",
+              "value": {
+                "package": "__dry_run_package__",
+                "package_version": "0.0.0"
+              }
+            }
+          },
+          "fan_out": {
+            "source_step": "select_package_rows",
+            "source_field": "result",
+            "as": "package_row",
+            "on_error": "continue"
+          }
+        }
+      ]
+    },
+    {
+      "name": "summary",
+      "steps": [
+        {
+          "name": "summarize_lag",
+          "workflow_type": "control.version.lag_summary",
+          "input_mapping": {
+            "items": {
+              "source": "step",
+              "step": "check_package_row_latest_version",
+              "field": ""
+            },
+            "source_items": {
+              "source": "step",
+              "step": "select_package_rows",
+              "field": "result"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "visibility": "public",
+    "domain": "deployment",
+    "effect": "read_registry_batch_lag_summary",
+    "row_contract": {
+      "required": [
+        "package",
+        "package_version"
+      ]
+    },
+    "registered_dependencies": {
+      "package-row-latest-version": "virtual.00000000000000000000000000000005@2",
+      "lag_summary": "control.version.lag_summary"
+    },
+    "status_policy": "Published package versions only",
+    "fan_out_policy": {
+      "source_step": "select_package_rows.result",
+      "on_error": "continue",
+      "missing_child_outputs": "reported by control.version.lag_summary through source_items comparison",
+      "dry_run_package_row_fallback": "neutral schema-only value overwritten by fan_out.as at runtime"
+    },
+    "output_contract": {
+      "final_step": "summarize_lag",
+      "result_schema": "control.version.lag_summary.v1",
+      "identity_fields": [
+        "package",
+        "package_version"
+      ]
+    },
+    "replaces_hardcoding": [
+      "per-caller iteration over package rows for latest-version checks",
+      "per-caller counting of behind/current/missing version evidence rows",
+      "per-caller deterministic text summary for lag reports"
+    ],
+    "required_runtime_config": [
+      "package registry connection uuid",
+      "registry domain/repository/format settings",
+      "normalized package rows",
+      "Optional package namespace input for namespaced package formats"
+    ],
+    "failure_modes": [
+      "missing_package_rows",
+      "missing_registry_connection",
+      "package_versions_unavailable_for_all_rows",
+      "invalid_row_shape"
+    ],
+    "aggregation_policy": "uses control.version.lag_summary default evidence paths and identity fields"
+  }
+}

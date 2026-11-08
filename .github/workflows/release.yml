@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and attach the tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: The tag matches package.json
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          test "v${version}" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != package.json v${version}"; exit 1; }
+      - run: pnpm run typecheck
+      - run: pnpm test
+      - run: pnpm run build
+      - run: pnpm pack
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" orkestia-composer-*.tgz \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Install: \`pnpm add https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(ls orkestia-composer-*.tgz)\`. Changes: see CHANGELOG.md."

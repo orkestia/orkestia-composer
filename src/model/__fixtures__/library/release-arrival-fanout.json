@@ -1,0 +1,307 @@
+{
+  "name": "release-arrival-fanout",
+  "description": "On a published GitHub release, send release and changelog Slack notifications and dispatch exactly one changelog event.",
+  "version": "1.0.0",
+  "inputs": [
+    {
+      "name": "organization_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Organization that owns the Slack connections and event routes."
+    },
+    {
+      "name": "release_status_connection_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Slack connection UUID for the release status route."
+    },
+    {
+      "name": "release_status_channel",
+      "type": "string",
+      "required": true,
+      "description": "Slack release status channel supplied by runtime route config."
+    },
+    {
+      "name": "changelog_connection_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Slack connection UUID for the changelog route."
+    },
+    {
+      "name": "changelog_channel",
+      "type": "string",
+      "required": true,
+      "description": "Slack changelog channel supplied by runtime route config."
+    },
+    {
+      "name": "release_status_text",
+      "type": "string",
+      "required": true,
+      "description": "Text to send to the release status channel."
+    },
+    {
+      "name": "changelog_text",
+      "type": "string",
+      "required": true,
+      "description": "Text to send to the changelog channel."
+    },
+    {
+      "name": "changelog_delivery_ref",
+      "type": "string",
+      "required": true,
+      "description": "Repository/tag idempotency key for the changelog event."
+    },
+    {
+      "name": "delivery_ref",
+      "type": "string",
+      "required": true,
+      "description": "Upstream GitHub release delivery reference."
+    },
+    {
+      "name": "repository",
+      "type": "string",
+      "required": true,
+      "description": "GitHub repository full name."
+    },
+    {
+      "name": "repository_name",
+      "type": "string",
+      "required": false,
+      "description": "GitHub repository short name."
+    },
+    {
+      "name": "tag",
+      "type": "string",
+      "required": true,
+      "description": "Release tag name."
+    },
+    {
+      "name": "release_url",
+      "type": "string",
+      "required": false,
+      "description": "GitHub release URL."
+    },
+    {
+      "name": "release_name",
+      "type": "string",
+      "required": false,
+      "description": "GitHub release display name."
+    },
+    {
+      "name": "action",
+      "type": "string",
+      "required": false,
+      "description": "GitHub release action that triggered this fanout."
+    },
+    {
+      "name": "payload",
+      "type": "json",
+      "required": true,
+      "description": "Original normalized GitHub release payload for downstream recipients."
+    },
+    {
+      "name": "metadata",
+      "type": "json",
+      "required": false,
+      "description": "Audit metadata from the normalized GitHub release event."
+    },
+    {
+      "name": "recipient_uuid",
+      "type": "string",
+      "required": false,
+      "description": "Optional recipient UUID. Omit to use the configured event routes."
+    },
+    {
+      "name": "release_status_blocks",
+      "type": "json",
+      "required": false,
+      "description": "Optional Slack blocks for release status message."
+    },
+    {
+      "name": "changelog_blocks",
+      "type": "json",
+      "required": false,
+      "description": "Optional Slack blocks for changelog message."
+    }
+  ],
+  "layers": [
+    {
+      "name": "notify_and_dispatch",
+      "steps": [
+        {
+          "name": "send_release_status",
+          "workflow_type": "slack.message.send",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "connection_uuid": {
+              "source": "input",
+              "field": "release_status_connection_uuid"
+            },
+            "channel": {
+              "source": "input",
+              "field": "release_status_channel"
+            },
+            "text": {
+              "source": "input",
+              "field": "release_status_text"
+            },
+            "blocks": {
+              "source": "input",
+              "field": "release_status_blocks"
+            }
+          }
+        },
+        {
+          "name": "send_changelog_notice",
+          "workflow_type": "slack.message.send",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "connection_uuid": {
+              "source": "input",
+              "field": "changelog_connection_uuid"
+            },
+            "channel": {
+              "source": "input",
+              "field": "changelog_channel"
+            },
+            "text": {
+              "source": "input",
+              "field": "changelog_text"
+            },
+            "blocks": {
+              "source": "input",
+              "field": "changelog_blocks"
+            }
+          }
+        },
+        {
+          "name": "dispatch_changelog_request",
+          "workflow_type": "example.events.dispatch",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "source": {
+              "source": "static",
+              "value": "changelog.composition"
+            },
+            "event_type": {
+              "source": "static",
+              "value": "changelog.release_requested"
+            },
+            "action": {
+              "source": "static",
+              "value": "released"
+            },
+            "delivery_ref": {
+              "source": "input",
+              "field": "changelog_delivery_ref"
+            },
+            "payload": {
+              "source": "input",
+              "field": "payload"
+            },
+            "metadata": {
+              "source": "input",
+              "field": "metadata"
+            },
+            "recipient_uuid": {
+              "source": "input",
+              "field": "recipient_uuid"
+            },
+            "max_dispatches": {
+              "source": "static",
+              "value": 1
+            },
+            "respect_capacity": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "receipt",
+      "steps": [
+        {
+          "name": "build_receipt",
+          "workflow_type": "control.value.build",
+          "input_mapping": {
+            "fields": {
+              "source": "step",
+              "step": "dispatch_changelog_request",
+              "field": ""
+            },
+            "defaults": {
+              "source": "static",
+              "value": {
+                "schema": "example.dispatch_receipt.v1",
+                "decision": "complete",
+                "reason": "release notification sent and changelog.release_requested dispatched",
+                "continuation": {
+                  "mode": "none",
+                  "next_input": {},
+                  "next_workflow_type": null,
+                  "next_workflow_input": null
+                },
+                "evidence": {
+                  "release_notification": "sent",
+                  "changelog_notification": "sent",
+                  "dispatched_event": "changelog.release_requested",
+                  "source_event": "github.release"
+                },
+                "retry_after_seconds": null
+              }
+            },
+            "drop_null": {
+              "source": "static",
+              "value": false
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "visibility": "public",
+    "domain": "release_management",
+    "effect": "send_slack_notifications_then_dispatch_event",
+    "trigger": "github.release published or released",
+    "replaces_hardcoding": [
+      "release Slack notifications sent by hand",
+      "Slack destination channels written into message templates"
+    ],
+    "required_runtime_config": [
+      "release status channel, for example #releases",
+      "changelog channel, for example #changelog",
+      "an event route for changelog.release_requested"
+    ],
+    "safety": {
+      "max_dispatches": 1,
+      "respects_capacity": true,
+      "dedupe_key": "changelog_delivery_ref should be stable per repository and tag"
+    },
+    "receipt_output": {
+      "schema": "example.dispatch_receipt.v1",
+      "path": "build_receipt.result",
+      "producer_step": "build_receipt",
+      "required_fields": [
+        "schema",
+        "decision",
+        "reason",
+        "continuation",
+        "evidence",
+        "retry_after_seconds"
+      ]
+    },
+    "dry_run_note": "Slack channel resolution is intentionally not a separate read step; the caller passes a channel that slack.message.send accepts."
+  }
+}

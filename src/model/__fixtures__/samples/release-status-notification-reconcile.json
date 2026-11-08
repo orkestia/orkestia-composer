@@ -1,0 +1,190 @@
+{
+  "name": "release-status-notification-reconcile",
+  "description": "Deterministically reconcile whether a release-status notification should be sent, then send through the configured route only when requested.",
+  "version": "1.0.0",
+  "inputs": [
+    {
+      "name": "organization_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Organization that owns the Slack connection."
+    },
+    {
+      "name": "connection_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Slack connection UUID for the release_status route."
+    },
+    {
+      "name": "channel",
+      "type": "string",
+      "required": true,
+      "description": "Slack channel name or id supplied by release_status route config."
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "description": "Release status text to send when send_required is true."
+    },
+    {
+      "name": "send_required",
+      "type": "boolean",
+      "required": true,
+      "description": "True when deterministic delivery evidence says the notification is missing and should be sent."
+    },
+    {
+      "name": "delivery_ref",
+      "type": "string",
+      "required": false,
+      "description": "Release notification delivery reference or idempotency key."
+    },
+    {
+      "name": "release_ref",
+      "type": "string",
+      "required": false,
+      "description": "Release ref or tag included in the reconcile receipt."
+    },
+    {
+      "name": "existing_delivery_evidence",
+      "type": "json",
+      "required": false,
+      "description": "Optional evidence proving a notification was already sent or skipped."
+    },
+    {
+      "name": "blocks",
+      "type": "json",
+      "required": false,
+      "description": "Optional Slack Block Kit payload."
+    },
+    {
+      "name": "metadata",
+      "type": "json",
+      "required": false,
+      "description": "Optional caller metadata."
+    }
+  ],
+  "layers": [
+    {
+      "name": "decide_send",
+      "steps": [
+        {
+          "name": "compare_send_required",
+          "workflow_type": "control.predicate.compare",
+          "input_mapping": {
+            "a": {
+              "source": "input",
+              "field": "send_required"
+            },
+            "op": {
+              "source": "static",
+              "value": "eq"
+            },
+            "b": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "send_if_required",
+      "steps": [
+        {
+          "name": "send_release_status_if_required",
+          "workflow_type": "virtual.00000000000000000000000000000006@1",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "connection_uuid": {
+              "source": "input",
+              "field": "connection_uuid"
+            },
+            "channel": {
+              "source": "input",
+              "field": "channel"
+            },
+            "text": {
+              "source": "input",
+              "field": "text"
+            },
+            "blocks": {
+              "source": "input",
+              "field": "blocks"
+            }
+          },
+          "condition": {
+            "field": "send_required",
+            "op": "truthy"
+          }
+        }
+      ]
+    },
+    {
+      "name": "build_receipt",
+      "steps": [
+        {
+          "name": "build_release_status_notification_reconcile",
+          "workflow_type": "control.value.build",
+          "input_mapping": {
+            "fields": {
+              "source": "step",
+              "step": "compare_send_required",
+              "field": ""
+            },
+            "defaults": {
+              "source": "static",
+              "value": {
+                "schema": "release.status_notification_reconcile.v1",
+                "send_policy": "send_release_status_if_required runs only when send_required is truthy",
+                "send_step": "send_release_status_if_required",
+                "existing_delivery_evidence_input": "existing_delivery_evidence",
+                "delivery_ref_input": "delivery_ref",
+                "release_ref_input": "release_ref",
+                "route_role": "release_status"
+              }
+            },
+            "drop_null": {
+              "source": "static",
+              "value": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "visibility": "public",
+    "domain": "deployment",
+    "effect": "reconcile_release_status_notification",
+    "output_contract": {
+      "send_required_step": "compare_send_required.result",
+      "send_step": "send_release_status_if_required",
+      "receipt_step": "build_release_status_notification_reconcile.result"
+    },
+    "registered_dependencies": {
+      "predicate-compare": "control.predicate.compare",
+      "release-status-notification-send": "virtual.00000000000000000000000000000006@1",
+      "value-build": "control.value.build"
+    },
+    "replaces_hardcoding": [
+      "per-caller release status Slack fallback send decision",
+      "per-caller direct slack.message.send fallback"
+    ],
+    "required_runtime_config": [
+      "release_status Slack connection and channel route",
+      "deterministic send_required decision from delivery evidence"
+    ],
+    "failure_modes": [
+      "missing_release_status_route",
+      "notification_send_failed"
+    ],
+    "route_policy": {
+      "route_role": "release_status",
+      "direct_slack_send_allowed": false
+    }
+  }
+}

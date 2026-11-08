@@ -1,0 +1,686 @@
+{
+  "name": "pull-request-approval-gate",
+  "description": "Settle 120s, wait for all CI checks to be complete and green on the event head SHA, verify the live head is unchanged, dispatch a pull_request.review_ready event to the configured reviewer, then wait for an APPROVED review on the exact head before building the receipt. No size-based auto-approval; red CI or CHANGES_REQUESTED stops the run before any receipt.",
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "description": "Organization that owns the GitHub installation and event routes.",
+      "name": "organization_uuid",
+      "required": true,
+      "type": "uuid"
+    },
+    {
+      "description": "GitHub repository owner.",
+      "name": "owner",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "description": "GitHub repository name.",
+      "name": "repo",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "description": "Pull request number.",
+      "name": "pr_number",
+      "required": true,
+      "type": "integer"
+    },
+    {
+      "description": "Head commit SHA the triggering event was emitted for; CI is awaited, the live head verified, and the review verdict read on exactly this SHA.",
+      "name": "head_sha",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "description": "Number of changed files from PR evidence (forwarded to the reviewer; no longer a gate decision input).",
+      "name": "changed_files",
+      "required": true,
+      "type": "integer"
+    },
+    {
+      "description": "Number of added lines from PR evidence (forwarded to the reviewer).",
+      "name": "additions",
+      "required": true,
+      "type": "integer"
+    },
+    {
+      "description": "Number of deleted lines from PR evidence (forwarded to the reviewer).",
+      "name": "deletions",
+      "required": true,
+      "type": "integer"
+    },
+    {
+      "description": "Deterministic risk-signal rows (forwarded to the reviewer as advisory context).",
+      "name": "risk_signals",
+      "required": true,
+      "type": "list"
+    },
+    {
+      "description": "Kept for compatibility; the gate does not auto-approve by size.",
+      "name": "max_changed_files",
+      "required": true,
+      "type": "integer"
+    },
+    {
+      "description": "Kept for compatibility; the gate does not auto-approve by size.",
+      "name": "max_additions",
+      "required": true,
+      "type": "integer"
+    },
+    {
+      "description": "Kept for compatibility; the gate does not auto-approve by size.",
+      "name": "max_deletions",
+      "required": true,
+      "type": "integer"
+    },
+    {
+      "description": "Deduplication key for the review_ready dispatch.",
+      "name": "delivery_ref",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "description": "Original GitHub pull_request payload or normalized PR evidence object.",
+      "name": "pull_request_payload",
+      "required": true,
+      "type": "json"
+    },
+    {
+      "description": "Additional audit/correlation metadata for the review event.",
+      "name": "metadata",
+      "type": "json"
+    },
+    {
+      "description": "Kept for compatibility; review routing uses the configured event routes.",
+      "name": "reviewer_uuid",
+      "type": "string"
+    }
+  ],
+  "layers": [
+    {
+      "name": "prepare",
+      "steps": [
+        {
+          "input_mapping": {
+            "arg0": {
+              "field": "owner",
+              "source": "input"
+            },
+            "arg1": {
+              "field": "repo",
+              "source": "input"
+            },
+            "strict": {
+              "source": "static",
+              "value": true
+            },
+            "template": {
+              "source": "static",
+              "value": "{0}/{1}"
+            }
+          },
+          "name": "build_repository",
+          "workflow_type": "control.value.format"
+        }
+      ]
+    },
+    {
+      "name": "settle_checks",
+      "steps": [
+        {
+          "input_mapping": {
+            "seconds": {
+              "source": "static",
+              "value": 120
+            }
+          },
+          "name": "wait_checks_materialize",
+          "workflow_type": "control.flow.wait"
+        }
+      ]
+    },
+    {
+      "name": "build_probe_org",
+      "steps": [
+        {
+          "input_mapping": {
+            "base": {
+              "source": "static",
+              "value": {
+                "allow_no_checks": true
+              }
+            },
+            "key": {
+              "source": "static",
+              "value": "organization_uuid"
+            },
+            "value": {
+              "field": "organization_uuid",
+              "source": "input"
+            }
+          },
+          "name": "set_probe_org",
+          "workflow_type": "control.value.set"
+        }
+      ]
+    },
+    {
+      "name": "build_probe_repo",
+      "steps": [
+        {
+          "input_mapping": {
+            "base": {
+              "field": "result",
+              "source": "step",
+              "step": "set_probe_org"
+            },
+            "key": {
+              "source": "static",
+              "value": "repository"
+            },
+            "value": {
+              "field": "result",
+              "source": "step",
+              "step": "build_repository"
+            }
+          },
+          "name": "set_probe_repository",
+          "workflow_type": "control.value.set"
+        }
+      ]
+    },
+    {
+      "name": "build_probe_sha",
+      "steps": [
+        {
+          "input_mapping": {
+            "base": {
+              "field": "result",
+              "source": "step",
+              "step": "set_probe_repository"
+            },
+            "key": {
+              "source": "static",
+              "value": "commit_sha"
+            },
+            "value": {
+              "field": "head_sha",
+              "source": "input"
+            }
+          },
+          "name": "set_probe_commit",
+          "workflow_type": "control.value.set"
+        }
+      ]
+    },
+    {
+      "name": "await_ci",
+      "steps": [
+        {
+          "input_mapping": {
+            "deadline_seconds": {
+              "source": "static",
+              "value": 3600
+            },
+            "equals": {
+              "source": "static",
+              "value": true
+            },
+            "input": {
+              "field": "result",
+              "source": "step",
+              "step": "set_probe_commit"
+            },
+            "interval_seconds": {
+              "source": "static",
+              "value": 60
+            },
+            "result_path": {
+              "source": "static",
+              "value": "green"
+            },
+            "stop_when_truthy": {
+              "source": "static",
+              "value": "failed_checks"
+            },
+            "workflow_type": {
+              "source": "static",
+              "value": "github.checks.evaluate_ref"
+            }
+          },
+          "name": "wait_checks_green",
+          "workflow_type": "control.poll.until"
+        }
+      ]
+    },
+    {
+      "name": "fetch_live_head",
+      "steps": [
+        {
+          "input_mapping": {
+            "organization_uuid": {
+              "field": "organization_uuid",
+              "source": "input"
+            },
+            "pull_number": {
+              "field": "pr_number",
+              "source": "input"
+            },
+            "repository": {
+              "field": "result",
+              "source": "step",
+              "step": "build_repository"
+            }
+          },
+          "name": "fetch_live_pr",
+          "workflow_type": "github.pulls.get_exact_pr"
+        }
+      ]
+    },
+    {
+      "name": "verify_head",
+      "steps": [
+        {
+          "input_mapping": {
+            "a": {
+              "field": "head_sha",
+              "source": "step",
+              "step": "fetch_live_pr"
+            },
+            "b": {
+              "field": "head_sha",
+              "source": "input"
+            },
+            "op": {
+              "source": "static",
+              "value": "eq"
+            },
+            "reason": {
+              "source": "static",
+              "value": "superseded: the PR head moved while waiting for CI; the newer push's own gate run owns the decision"
+            }
+          },
+          "name": "guard_head_unchanged",
+          "workflow_type": "control.flow.guard"
+        }
+      ]
+    },
+    {
+      "name": "build_review_payload",
+      "steps": [
+        {
+          "input_mapping": {
+            "defaults": {
+              "source": "static",
+              "value": {
+                "gate": "ci_green_head_stable",
+                "gate_composition": "pull-request-approval-gate@2",
+                "schema": "pull_request.review_ready.v1"
+              }
+            },
+            "drop_null": {
+              "source": "static",
+              "value": true
+            },
+            "fields": {
+              "field": "pull_request_payload",
+              "source": "input"
+            }
+          },
+          "name": "build_review_base",
+          "workflow_type": "control.value.build"
+        }
+      ]
+    },
+    {
+      "name": "stamp_review_head",
+      "steps": [
+        {
+          "input_mapping": {
+            "base": {
+              "field": "result",
+              "source": "step",
+              "step": "build_review_base"
+            },
+            "key": {
+              "source": "static",
+              "value": "head_sha"
+            },
+            "value": {
+              "field": "head_sha",
+              "source": "input"
+            }
+          },
+          "name": "set_review_head",
+          "workflow_type": "control.value.set"
+        }
+      ]
+    },
+    {
+      "name": "stamp_review_repo",
+      "steps": [
+        {
+          "input_mapping": {
+            "base": {
+              "field": "result",
+              "source": "step",
+              "step": "set_review_head"
+            },
+            "key": {
+              "source": "static",
+              "value": "repository"
+            },
+            "value": {
+              "field": "result",
+              "source": "step",
+              "step": "build_repository"
+            }
+          },
+          "name": "set_review_repository",
+          "workflow_type": "control.value.set"
+        }
+      ]
+    },
+    {
+      "name": "stamp_review_pr_number",
+      "steps": [
+        {
+          "input_mapping": {
+            "base": {
+              "field": "result",
+              "source": "step",
+              "step": "set_review_repository"
+            },
+            "key": {
+              "source": "static",
+              "value": "pr_number"
+            },
+            "value": {
+              "field": "pr_number",
+              "source": "input"
+            }
+          },
+          "name": "set_review_pr_number",
+          "workflow_type": "control.value.set"
+        }
+      ]
+    },
+    {
+      "name": "dispatch_review",
+      "steps": [
+        {
+          "input_mapping": {
+            "action": {
+              "source": "static",
+              "value": "requested"
+            },
+            "delivery_ref": {
+              "field": "delivery_ref",
+              "source": "input"
+            },
+            "event_type": {
+              "source": "static",
+              "value": "pull_request.review_ready"
+            },
+            "max_dispatches": {
+              "source": "static",
+              "value": 1
+            },
+            "metadata": {
+              "field": "metadata",
+              "source": "input"
+            },
+            "organization_uuid": {
+              "field": "organization_uuid",
+              "source": "input"
+            },
+            "payload": {
+              "field": "result",
+              "source": "step",
+              "step": "set_review_pr_number"
+            },
+            "respect_capacity": {
+              "source": "static",
+              "value": true
+            },
+            "source": {
+              "source": "static",
+              "value": "pull_request.composition"
+            }
+          },
+          "name": "dispatch_review_ready",
+          "workflow_type": "example.events.dispatch"
+        }
+      ]
+    },
+    {
+      "name": "build_verdict_probe_org",
+      "steps": [
+        {
+          "input_mapping": {
+            "base": {
+              "source": "static",
+              "value": {}
+            },
+            "key": {
+              "source": "static",
+              "value": "organization_uuid"
+            },
+            "value": {
+              "field": "organization_uuid",
+              "source": "input"
+            }
+          },
+          "name": "set_verdict_org",
+          "workflow_type": "control.value.set"
+        }
+      ]
+    },
+    {
+      "name": "build_verdict_probe_repo",
+      "steps": [
+        {
+          "input_mapping": {
+            "base": {
+              "field": "result",
+              "source": "step",
+              "step": "set_verdict_org"
+            },
+            "key": {
+              "source": "static",
+              "value": "repository"
+            },
+            "value": {
+              "field": "result",
+              "source": "step",
+              "step": "build_repository"
+            }
+          },
+          "name": "set_verdict_repository",
+          "workflow_type": "control.value.set"
+        }
+      ]
+    },
+    {
+      "name": "build_verdict_probe_pr",
+      "steps": [
+        {
+          "input_mapping": {
+            "base": {
+              "field": "result",
+              "source": "step",
+              "step": "set_verdict_repository"
+            },
+            "key": {
+              "source": "static",
+              "value": "pull_number"
+            },
+            "value": {
+              "field": "pr_number",
+              "source": "input"
+            }
+          },
+          "name": "set_verdict_pull_number",
+          "workflow_type": "control.value.set"
+        }
+      ]
+    },
+    {
+      "name": "build_verdict_probe_sha",
+      "steps": [
+        {
+          "input_mapping": {
+            "base": {
+              "field": "result",
+              "source": "step",
+              "step": "set_verdict_pull_number"
+            },
+            "key": {
+              "source": "static",
+              "value": "commit_sha"
+            },
+            "value": {
+              "field": "head_sha",
+              "source": "input"
+            }
+          },
+          "name": "set_verdict_commit",
+          "workflow_type": "control.value.set"
+        }
+      ]
+    },
+    {
+      "name": "await_review_verdict",
+      "steps": [
+        {
+          "input_mapping": {
+            "deadline_seconds": {
+              "source": "static",
+              "value": 3600
+            },
+            "equals": {
+              "source": "static",
+              "value": true
+            },
+            "input": {
+              "field": "result",
+              "source": "step",
+              "step": "set_verdict_commit"
+            },
+            "interval_seconds": {
+              "source": "static",
+              "value": 60
+            },
+            "result_path": {
+              "source": "static",
+              "value": "approved"
+            },
+            "stop_when_truthy": {
+              "source": "static",
+              "value": "changes_requested"
+            },
+            "workflow_type": {
+              "source": "static",
+              "value": "github.pulls.list_reviews"
+            }
+          },
+          "name": "wait_review_verdict",
+          "workflow_type": "control.poll.until"
+        }
+      ]
+    },
+    {
+      "name": "build_receipt",
+      "steps": [
+        {
+          "input_mapping": {
+            "defaults": {
+              "source": "static",
+              "value": {
+                "ci_gate": "settle 120s then wait_checks_green (control.poll.until over github.checks.evaluate_ref: all checks on the event head SHA complete and green; red checks stop the wait; 60min deadline) then guard_head_unchanged (live head must equal the event head)",
+                "verdict_gate": "wait_review_verdict (control.poll.until over github.pulls.list_reviews on the exact head: the latest review per author must be APPROVED and none CHANGES_REQUESTED; CHANGES_REQUESTED stops the wait; 60min deadline)",
+                "decision_policy": "no auto-approval: after CI is green on the reviewed head and the head is unchanged, dispatch_review_ready hands the PR to the configured reviewer; this receipt is built ONLY after an APPROVED review exists on head_sha. Red CI, a superseded head, CHANGES_REQUESTED, or a verdict deadline stops this run before any receipt",
+                "review_dispatch_step": "dispatch_review_ready",
+                "review_event": "pull_request.review_ready:requested",
+                "verdict_step": "wait_review_verdict",
+                "schema": "pull_request.approval_gate.v4"
+              }
+            },
+            "drop_null": {
+              "source": "static",
+              "value": true
+            },
+            "fields": {
+              "field": "",
+              "source": "step",
+              "step": "wait_review_verdict"
+            }
+          },
+          "name": "build_pull_request_review_gate_receipt",
+          "workflow_type": "control.value.build"
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "composition_policy": {
+      "ci_gate": "control.poll.until(github.checks.evaluate_ref) — dispatch only after every check on the event head SHA is complete and green; failed checks stop the wait immediately; superseded heads are guarded out; 120s settle wait before the first tick so check runs on a fresh push can appear",
+      "verdict_gate": "control.poll.until(github.pulls.list_reviews) — after dispatching review_ready, wait until the latest review on head_sha is APPROVED; CHANGES_REQUESTED stops the run; 60min deadline",
+      "guarded_by": [
+        "all CI checks complete and green on head_sha",
+        "live PR head == head_sha",
+        "latest review per author on head_sha is APPROVED and none is CHANGES_REQUESTED"
+      ],
+      "merge_allowed": false,
+      "no_auto_approval": "size thresholds and risk signals are forwarded as advisory context only; every CI-green PR is reviewed, and the receipt exists only once that review is APPROVED",
+      "normal_path_single_surface": true,
+      "review_dispatch": "example.events.dispatch -> pull_request.review_ready:requested (the reviewer posts APPROVE/REQUEST_CHANGES on GitHub); this composition then reads that verdict itself rather than trusting a dispatched event"
+    },
+    "domain": "github",
+    "effect": "await_ci_green_then_dispatch_review_then_await_approved_verdict",
+    "failure_modes": [
+      "ci_red_stops_wait",
+      "ci_wait_deadline",
+      "superseded_head",
+      "review_dispatch_not_routed",
+      "review_changes_requested",
+      "review_verdict_deadline"
+    ],
+    "input_contract": {
+      "head_sha": {
+        "meaning": "exact commit the event fired for; CI, head verification, the review payload, and the verdict read all pin to it"
+      },
+      "size_and_risk_inputs": "changed_files/additions/deletions/risk_signals/max_* are accepted for binding compatibility and forwarded as advisory context; they no longer gate anything"
+    },
+    "output_contract": {
+      "ci_gate_step": "wait_checks_green",
+      "head_guard_step": "guard_head_unchanged",
+      "verdict_step": "wait_review_verdict",
+      "receipt_step": "build_pull_request_review_gate_receipt.result",
+      "review_dispatch_step": "dispatch_review_ready"
+    },
+    "registered_dependencies": {
+      "checks-evaluate-ref": "github.checks.evaluate_ref",
+      "flow-guard": "control.flow.guard",
+      "flow-wait": "control.flow.wait",
+      "github-get-exact-pr": "github.pulls.get_exact_pr",
+      "github-list-reviews": "github.pulls.list_reviews",
+      "poll-until": "control.poll.until",
+      "event-dispatch": "example.events.dispatch",
+      "value-build": "control.value.build",
+      "value-format": "control.value.format",
+      "value-set": "control.value.set"
+    },
+    "required_runtime_config": [
+      "an event route for pull_request.review_ready:requested to the reviewer",
+      "github.pulls.list_reviews available in the catalog"
+    ],
+    "visibility": "public",
+    "lineage": {
+      "live_version": 2,
+      "synced_at": "2026-01-01"
+    }
+  }
+}

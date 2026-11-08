@@ -1,0 +1,124 @@
+{
+  "name": "deployment-notification-send",
+  "description": "Resolve a Slack channel from runtime input and send a deployment notification without hardcoded channel routing.",
+  "version": "1.0.0",
+  "inputs": [
+    {
+      "name": "organization_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Organization that owns the Slack connection."
+    },
+    {
+      "name": "connection_uuid",
+      "type": "uuid",
+      "required": true,
+      "description": "Slack connection UUID."
+    },
+    {
+      "name": "channel",
+      "type": "string",
+      "required": true,
+      "description": "Slack channel name or id supplied by runtime route config."
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "required": true,
+      "description": "Slack mrkdwn message text."
+    },
+    {
+      "name": "blocks",
+      "type": "json",
+      "required": false,
+      "description": "Optional Slack Block Kit payload."
+    },
+    {
+      "name": "thread_ts",
+      "type": "string",
+      "required": false,
+      "description": "Optional Slack thread timestamp."
+    }
+  ],
+  "layers": [
+    {
+      "name": "resolve",
+      "steps": [
+        {
+          "name": "resolve_channel",
+          "workflow_type": "slack.channel.resolve",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "connection_uuid": {
+              "source": "input",
+              "field": "connection_uuid"
+            },
+            "channel": {
+              "source": "input",
+              "field": "channel"
+            },
+            "allow_dm": {
+              "source": "static",
+              "value": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "send",
+      "steps": [
+        {
+          "name": "send_message",
+          "workflow_type": "slack.message.send",
+          "input_mapping": {
+            "organization_uuid": {
+              "source": "input",
+              "field": "organization_uuid"
+            },
+            "connection_uuid": {
+              "source": "input",
+              "field": "connection_uuid"
+            },
+            "channel": {
+              "source": "step",
+              "step": "resolve_channel",
+              "field": "channel"
+            },
+            "text": {
+              "source": "input",
+              "field": "text"
+            },
+            "blocks": {
+              "source": "input",
+              "field": "blocks"
+            },
+            "thread_ts": {
+              "source": "input",
+              "field": "thread_ts"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "visibility": "public",
+    "domain": "deployment",
+    "effect": "slack_message",
+    "replaces_hardcoding": [
+      "deployment Slack channel constants",
+      "channel routing written into message templates"
+    ],
+    "required_runtime_config": [
+      "slack connection uuid",
+      "channel role to channel name/id mapping"
+    ],
+    "notes": [
+      "This composition intentionally accepts the channel as input. Channel-role resolution belongs in runtime config or a route resolver workflow."
+    ]
+  }
+}
