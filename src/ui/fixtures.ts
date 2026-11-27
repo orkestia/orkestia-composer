@@ -18,6 +18,8 @@ export interface FixtureOptions {
   minIntervalMinutes?: number
   /** Lineages that are live but not offered to the workspace; a publish offers them again. */
   unexposed?: string[]
+  /** Schedules can run once, now (`ScheduleBackend.runNow`). */
+  runNow?: boolean
 }
 
 export type FixtureBackend = CompositionBackend & {
@@ -164,6 +166,13 @@ export function createFixtureBackend(options: FixtureOptions = {}): FixtureBacke
         return { deleted: i >= 0 }
       },
     },
+  }
+  if (options.runNow) {
+    backend.schedules.runNow = async (uuid) => {
+      const s = schedulesList.find((x) => x.schedule_uuid === uuid)
+      if (!s) throw new Error(`No schedule ${uuid}`)
+      return backend.start(s.target_workflow_type, s.initial_data ?? {})
+    }
   }
   if (options.publishing) {
     backend.publishRecovery = { attempts: 2, intervalMs: 0 }

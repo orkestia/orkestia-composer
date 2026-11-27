@@ -184,6 +184,8 @@ export interface ScheduleBackend {
   update(scheduleUuid: string, patch: SchedulePatch): Promise<Schedule>
   setActive(scheduleUuid: string, active: boolean): Promise<unknown>
   remove(scheduleUuid: string): Promise<unknown>
+  /** Run a schedule once, now, with its own answers (as its schedule would). Absent = no "Run now". */
+  runNow?(scheduleUuid: string): Promise<RunState>
   /** The shortest gap the backend allows between runs, in minutes (app schedules: 15). Absent = 1. */
   minIntervalMinutes?: number
   /** Whether it takes time expressions (`schedule_expression` + `timezone`). Absent = intervals only. */

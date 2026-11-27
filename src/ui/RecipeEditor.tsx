@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import {
   IcAlertCircle, IcBraces, IcCheck, IcHistory, IcListOrdered, IcLock, IcMessageText, IcPause, IcPlay, IcPlus, IcSidebarCollapse, IcSidebarExpand, IcTrash, IcX,
 } from './icons'
-import { confirmDialog } from './runtime'
+import { confirmDialog, notify } from './runtime'
 import { Spinner } from './primitives'
 import { ToolbarTitle } from './primitives'
 import type { CatalogEntry, FieldType } from '../model/catalog'
@@ -419,6 +419,12 @@ function Runs({ entry, schedules }: { entry: Entry; schedules: Schedule[] }) {
           <span className={`dot ${schedule.active ? 'dot-success' : 'dot-muted'}`} />
           <span>{schedule.active ? (schedule.schedule_expression ? t('Scheduled at “{expression}” ({zone})', { expression: schedule.schedule_expression, zone: schedule.timezone || 'UTC' }) : t('Scheduled every {minutes} min', { minutes: schedule.interval_minutes })) : t('Schedule paused')}{schedule.active && schedule.next_run_at ? t(' · next {when}', { when: new Date(schedule.next_run_at).toLocaleString(intlLocale()) }) : ''}</span>
           <button type="button" className="link" onClick={() => void builder.setScheduleActive(key, schedule.schedule_uuid, !schedule.active)}>{schedule.active ? <><IcPause size="xs" /> {t('Pause')}</> : <><IcPlay size="xs" /> {t('Resume')}</>}</button>
+          {api.canRunScheduleNow && api.capabilities.run !== false ? (
+            <button type="button" className="link" title={t('Run it once now, with its saved answers. The schedule stays as it is.')}
+              onClick={() => void builder.runScheduleNow(key, schedule).catch((e) => notify(t('The run could not be started: {error}', { error: e instanceof Error ? e.message : String(e) })))}>
+              <IcPlay size="xs" /> {t('Run now')}
+            </button>
+          ) : null}
           <button type="button" className="link danger" onClick={() => void confirmDialog(t('Delete this schedule? The workflow stays; it just stops starting by itself.'), { title: t('Delete Schedule'), okLabel: t('Delete'), destructive: true }).then((ok) => { if (ok) void builder.deleteSchedule(key, schedule.schedule_uuid) })}><IcTrash size="xs" /> {t('Delete')}</button>
         </div>
       ) : null}

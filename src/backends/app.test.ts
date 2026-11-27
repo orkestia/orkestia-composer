@@ -559,3 +559,96 @@ describe('appBackend: workspaces', () => {
     await expect(backend.workspaces()).rejects.toSatisfy((e: unknown) => isComposerError(e, 'ENTRY_POINT_MISSING'))
   })
 })
+
+describe('appBackend: run now and a run’s steps', () => {
+  const live = { workflow_type: typeOf('a', 2) }
+  const routine = {
+    schedule_uuid: 's1', name: 'Weekly digest', target: { kind: 'composition', name: `${WS}-a`, version: null, follows_head: true },
+    interval_seconds: 3600, active: true, mine: true,
+  }
+  const step = (key: string, out: Json) => ({ [key.replace(/-/g, '_')]: out })
+  const withKeys = (extra: string[]) => fakeClient().onGet(/^\/api\/workflows\/types/, () => exposedList([...KEYS, 'schedule-list', ...extra]))
+    .on(ep('list'), () => page([lineage('a', 2, 2)]))
+    .on(ep('schedule-list'), () => step('schedule-list', { schedules: [routine], count: 1 }))
+
+  it('offers neither until the app has their entry points', async () => {
+    const backend = appBackend(withKeys([]))
+    await backend.lineages()
+    expect(backend.schedules.runNow).toBeUndefined()
+    expect(backend.inspect).toBeUndefined()
+  })
+
+  it('runs a routine once through composer-schedule-run-now and files the run under the version it ran', async () => {
+    // A routine that follows the head: the platform answers with the lineage ORN as the type.
+    const c = withKeys(['schedule-run-now'])
+      .on(ep('schedule-run-now'), (input) => step('schedule-run-now', { routine: input.routine, workflow_id: 'wf_now', workflow_type: 'orn:example:a' }))
+    const backend = appBackend(c)
+    await backend.lineages()
+    await backend.schedules.list([live.workflow_type])
+    const started = await backend.schedules.runNow!('s1')
+    expect(c.inputsOf(ep('schedule-run-now'))).toEqual([{ routine: 's1' }])
+    expect(started).toMatchObject({ workflow_id: 'wf_now', workflow_type: live.workflow_type })
+    c.states.set('wf_now', { workflow_id: 'wf_now', is_terminal: true, terminal_status: 'success', state_name: 'completed' })
+    expect((await backend.runs([live.workflow_type])).map((r) => [r.workflow_uuid, r.source])).toEqual([['wf_now', 'schedule']])
+  })
+
+  it('types a refused run now', async () => {
+    const c = withKeys(['schedule-run-now'])
+      .on(ep('schedule-run-now'), () => { throw new RunFailed('schedule_publish_forbidden: this version is a draft') })
+    const backend = appBackend(c)
+    await backend.lineages()
+    await expect(backend.schedules.runNow!('s1')).rejects.toMatchObject({ code: 'CAPABILITY_REQUIRED' })
+  })
+
+  it('reads a run’s steps through composer-run-steps, page by page', async () => {
+    const row = (name: string, status: string, extra: Json = {}) => ({ step_name: name, workflow_type: 'example.notify.send', status, ...extra })
+    const pages: Record<number, Json> = {
+      0: { workflow_id: 'wf_1', steps: [row('look_up', 'completed', { output_preview: { order: {}, total: 3 } }), row('notify', 'failed', { error: { code: 'http_error', message: 'The channel is gone' } })], next_offset: 2, total: 3 },
+      2: { workflow_id: 'wf_1', steps: [row('archive', 'skipped')], next_offset: null, total: 3 },
+    }
+    const c = withKeys(['run-steps']).on(ep('run-steps'), (input) => step('run-steps', pages[Number(input.offset)]))
+    const backend = appBackend(c)
+    await backend.lineages()
+    const inspector = await backend.inspect!('wf_1')
+    expect(c.inputsOf(ep('run-steps'))).toEqual([{ workflow_id: 'wf_1', limit: 200, offset: 0 }, { workflow_id: 'wf_1', limit: 200, offset: 2 }])
+    expect(inspector.layers).toEqual([{ name: 'steps', index: 0, steps: [
+      { step_name: 'look_up', workflow_type: 'example.notify.send', status: 'succeeded', output_keys: ['order', 'total'] },
+      { step_name: 'notify', workflow_type: 'example.notify.send', status: 'failed', failure_reason: 'The channel is gone' },
+      { step_name: 'archive', workflow_type: 'example.notify.send', status: 'pending' },
+    ] }])
+  })
+
+  it('finds the new entry points by name', () => {
+    const found = findEntryPoints([
+      { name: `composer-run-steps-${APP}`, workflow_type: ep('run-steps') },
+      { name: `composer-schedule-run-now-${APP}`, workflow_type: ep('schedule-run-now') },
+    ])
+    expect(found).toEqual({ 'run-steps': ep('run-steps'), 'schedule-run-now': ep('schedule-run-now') })
+  })
+})
+
+describe('refusals: the platform’s save checks', () => {
+  it('names a hidden value or an unsafe secret, also inside a broader refusal', () => {
+    const hidden = refusalOf(new RunFailed('composition_hidden_value: steps.call.input.headers.Authorization holds the placeholder <hidden>'))
+    expect(hidden.code).toBe('HIDDEN_VALUE')
+    expect(hidden.detail).toContain('steps.call.input.headers.Authorization')
+    const wrapped = refusalOf(refused('VALIDATION_FAILED', { findings: [{ code: 'composition_secret_unsafe', step_name: 'post', message: 'a vault reference goes to a non-sensitive parameter' }] }))
+    expect(wrapped.code).toBe('SECRET_UNSAFE')
+    expect(wrapped.detail).toBe('post: a vault reference goes to a non-sensitive parameter')
+    // A specific refusal is never overridden by words in its message.
+    expect(refusalOf(refused('CAPABILITY_REQUIRED', {}, 'see composition_hidden_value')).code).toBe('CAPABILITY_REQUIRED')
+    expect(refusalOf(new RunFailed('run_not_found: Run wf_9 not found')).code).toBe('NOT_FOUND')
+  })
+
+  it('has a message for each in en, pt-BR and es', () => {
+    for (const code of ['HIDDEN_VALUE', 'SECRET_UNSAFE'] as const) {
+      const en = errorMessage(code)
+      setLocale('pt-BR')
+      const pt = errorMessage(code)
+      setLocale('es')
+      const es = errorMessage(code)
+      setLocale('en')
+      expect(new Set([en, pt, es]).size).toBe(3)
+    }
+  })
+})

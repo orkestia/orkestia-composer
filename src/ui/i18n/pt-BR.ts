@@ -558,4 +558,10 @@ export const ptBR: Record<string, string> = {
   "The platform ran into a problem of its own. Try again later.": "A plataforma teve um problema interno. Tente de novo mais tarde.",
   "Sign in to this app to build workflows.": "Entre neste app para criar fluxos.",
   "It belongs to another organization.": "Ele pertence a outra organização.",
+  "Run now": "Executar agora",
+  "Run it once now, with its saved answers. The schedule stays as it is.": "Executa uma vez agora, com as respostas salvas. O agendamento continua como está.",
+  "The run could not be started: {error}": "Não foi possível iniciar a execução: {error}",
+  "run a schedule now": "executar um agendamento agora",
+  "It still holds a value the platform hides when it shows a saved workflow. Type that value again, or keep it in the Vault, then save.": "Ainda contém um valor que a plataforma esconde ao mostrar um fluxo salvo. Digite esse valor de novo, ou guarde-o no Vault, e salve.",
+  "A secret from the Vault would go where it could be seen. Pass it only to a field meant for secrets.": "Um segredo do Vault iria para onde poderia ser visto. Passe-o só para um campo feito para segredos.",
 }
