@@ -180,6 +180,25 @@ describe('the schedule editor', () => {
     expect(backend.schedulesList[0]).toMatchObject({ schedule_expression: '30 8 * * *', timezone: 'Europe/Madrid', active: true })
   })
 
+  it('runs a saved schedule once, now, when the backend can', async () => {
+    const backend = await setup({ minIntervalMinutes: 15, runNow: true })
+    fireEvent.click(screen.getByRole('button', { name: 'On a schedule' }))
+    await clickSave()
+    await waitFor(() => expect(backend.schedulesList).toHaveLength(1))
+    fireEvent.click(await screen.findByRole('button', { name: /Run now/ }))
+    await waitFor(() => expect(backend.started).toHaveLength(1))
+    expect(backend.started[0].workflow_type).toBe(backend.schedulesList[0].target_workflow_type)
+  })
+
+  it('offers no Run now when the backend can’t', async () => {
+    const backend = await setup({ minIntervalMinutes: 15 })
+    fireEvent.click(screen.getByRole('button', { name: 'On a schedule' }))
+    await clickSave()
+    await waitFor(() => expect(backend.schedulesList).toHaveLength(1))
+    await screen.findByRole('button', { name: /Pause/ })
+    expect(screen.queryByRole('button', { name: /Run now/ })).toBeNull()
+  })
+
   it('shows each planned run in the viewer’s time and the schedule’s', () => {
     render(<PlannedRuns cadence={{ kind: 'cron', expression: '0 6 * * *', timezone: 'America/Sao_Paulo' }} viewerZone="Europe/Madrid" from={new Date('2026-06-01T00:00:00Z')} count={2} />)
     const planned = screen.getByLabelText('Planned runs')

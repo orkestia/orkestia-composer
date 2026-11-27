@@ -558,4 +558,10 @@ export const es: Record<string, string> = {
   "The platform ran into a problem of its own. Try again later.": "La plataforma tuvo un problema interno. Vuelve a intentarlo más tarde.",
   "Sign in to this app to build workflows.": "Inicia sesión en esta app para crear flujos.",
   "It belongs to another organization.": "Pertenece a otra organización.",
+  "Run now": "Ejecutar ahora",
+  "Run it once now, with its saved answers. The schedule stays as it is.": "Lo ejecuta una vez ahora, con las respuestas guardadas. La programación sigue igual.",
+  "The run could not be started: {error}": "No se pudo iniciar la ejecución: {error}",
+  "run a schedule now": "ejecutar una programación ahora",
+  "It still holds a value the platform hides when it shows a saved workflow. Type that value again, or keep it in the Vault, then save.": "Todavía contiene un valor que la plataforma oculta al mostrar un flujo guardado. Escribe ese valor de nuevo, o guárdalo en el Vault, y guarda.",
+  "A secret from the Vault would go where it could be seen. Pass it only to a field meant for secrets.": "Un secreto del Vault iría a donde podría verse. Pásalo solo a un campo pensado para secretos.",
 }

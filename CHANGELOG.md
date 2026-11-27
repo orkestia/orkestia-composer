@@ -7,6 +7,32 @@ the API: pin a caret range on the minor you tested (`^0.1.0`).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-27
+
+### Added
+- Hidden values: the editor's checks flag a field that still holds `<hidden>`,
+  the placeholder the platform returns in place of a value it hides (a static
+  `Authorization` header, a token). The platform refuses such a save
+  (`composition_hidden_value`), which would erase the real value. The model
+  exports `HIDDEN_MARKER`, `holdsHiddenMarker` and `hiddenValuePaths`.
+- `ComposerError` codes `HIDDEN_VALUE` and `SECRET_UNSAFE`, for the platform's
+  `composition_hidden_value` and `composition_secret_unsafe` save checks, also
+  when a `VALIDATION_FAILED` refusal names them. `run_not_found` reads as
+  `NOT_FOUND` and `schedule_publish_forbidden` as `CAPABILITY_REQUIRED`.
+- `ScheduleBackend.runNow` (optional) and a **Run now** button on a saved
+  schedule: it runs the schedule once with its saved answers and follows the run
+  on the cards. `appBackend` offers it when the app has a
+  `composer-schedule-run-now-<app12>` entry point (`schedule.app.run-now`).
+- `appBackend.inspect`: each step's status and failure on the cards while a run
+  goes, from `run.app.steps`, when the app has a `composer-run-steps-<app12>`
+  entry point. The editor reads it every third poll (and once at the end), since
+  each read is a platform run.
+
+### Changed
+- Development dependencies: patch and minor updates (Vite 8.3.8,
+  `@vitejs/plugin-react` 6.3.0, jsdom 31.0.1, `@types/react` 19.3.3,
+  `@testing-library/user-event` 14.6.13).
+
 ## [0.1.2] - 2026-11-08
 
 ### Fixed

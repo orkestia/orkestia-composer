@@ -23,8 +23,11 @@ export type RefusalCode = (typeof REFUSAL_CODES)[number]
  * A refusal code, or one the backend raises itself: the platform did not
  * answer in time, a publish is still pending after checking, the app does not
  * offer an entry point, a schedule runs too often, or anything else.
+ * HIDDEN_VALUE and SECRET_UNSAFE are the platform's save checks
+ * (`composition_hidden_value`, `composition_secret_unsafe`), under the editor's names.
  */
-export type ComposerErrorCode = RefusalCode | 'TIMEOUT' | 'PUBLISH_PENDING' | 'ENTRY_POINT_MISSING' | 'SCHEDULE_TOO_FREQUENT' | 'UNKNOWN'
+export type ComposerErrorCode = RefusalCode | 'TIMEOUT' | 'PUBLISH_PENDING' | 'ENTRY_POINT_MISSING' | 'SCHEDULE_TOO_FREQUENT'
+  | 'HIDDEN_VALUE' | 'SECRET_UNSAFE' | 'UNKNOWN'
 
 const MESSAGES: Record<ComposerErrorCode, string> = {
   AUTHORING_NOT_ENABLED: msg('Building workflows isn’t turned on for this app.'),
@@ -49,6 +52,8 @@ const MESSAGES: Record<ComposerErrorCode, string> = {
   PUBLISH_PENDING: msg('Publishing is taking longer than usual. Try again: it won’t publish twice.'),
   ENTRY_POINT_MISSING: msg('This app isn’t set up for building workflows yet.'),
   SCHEDULE_TOO_FREQUENT: msg('That schedule runs more often than this app allows.'),
+  HIDDEN_VALUE: msg('It still holds a value the platform hides when it shows a saved workflow. Type that value again, or keep it in the Vault, then save.'),
+  SECRET_UNSAFE: msg('A secret from the Vault would go where it could be seen. Pass it only to a field meant for secrets.'),
   UNKNOWN: msg('Something went wrong.'),
 }
 

@@ -82,3 +82,43 @@ export function canonicalJson(value: unknown, space?: number): string {
     return v
   }, space)
 }
+
+/**
+ * What the platform puts where it hides a value when it shows a saved composition (a static
+ * `Authorization` header, a token). A save that still carries it is refused
+ * (`composition_hidden_value`): storing it would erase the real value.
+ */
+export const HIDDEN_MARKER = '<hidden>'
+
+/** Whether a fixed value is, or holds anywhere inside it, the hidden-value marker. */
+export function holdsHiddenMarker(value: unknown): boolean {
+  if (typeof value === 'string') return value.trim() === HIDDEN_MARKER
+  if (Array.isArray(value)) return value.some(holdsHiddenMarker)
+  if (value && typeof value === 'object') return Object.values(value as Record<string, unknown>).some(holdsHiddenMarker)
+  return false
+}
+
+/**
+ * Where a definition's fixed step inputs hold the hidden-value marker, as the platform names them
+ * (`steps.<step>.input.<field>.<key>`). The same walk as the platform's save check: step and undo
+ * inputs, through `object` and `list` mappings.
+ */
+export function hiddenValuePaths(definition: CompositionDefinition): string[] {
+  const out: string[] = []
+  const walkValue = (value: unknown, path: string) => {
+    if (typeof value === 'string') { if (value.trim() === HIDDEN_MARKER) out.push(path) }
+    else if (Array.isArray(value)) value.forEach((v, i) => walkValue(v, `${path}[${i}]`))
+    else if (value && typeof value === 'object') for (const [k, v] of Object.entries(value as Record<string, unknown>)) walkValue(v, `${path}.${k}`)
+  }
+  const walkMapping = (m: InputMapping, path: string) => {
+    if (m.source === 'static') walkValue(m.value, path)
+    else if (m.source === 'object') for (const [k, v] of Object.entries(m.fields)) walkMapping(v, `${path}.${k}`)
+    else if (m.source === 'list') m.items.forEach((v, i) => walkMapping(v, `${path}[${i}]`))
+  }
+  for (const layer of definition.layers ?? []) {
+    for (const step of [...(layer.steps ?? []), ...(layer.compensate ?? [])]) {
+      for (const [param, m] of Object.entries(step.input_mapping ?? {})) walkMapping(m, `steps.${step.name}.input.${param}`)
+    }
+  }
+  return out
+}

@@ -11,24 +11,26 @@
 // still not fixed by the contract is marked ASSUMPTION.
 import { canonicalJson, type CompositionDefinition } from '../model/definition'
 import type { Cadence } from '../model/schedule'
-import type { CompositionRow, Json, Lineage, PublishInput, PublishPending, PublishReceipt, RunRow, SaveResult, Schedule, SchedulePatch, ValidateResult } from '../ui/host'
+import type { CompositionRow, InspectorStep, Json, Lineage, PublishInput, PublishPending, PublishReceipt, RunRow, SaveResult, Schedule, SchedulePatch, ValidateResult } from '../ui/host'
 import { ComposerError, REFUSAL_CODES, type ComposerErrorCode, type RefusalCode } from './errors'
 
 // ---- Entry points ----
 
 /**
- * What each `composer-<key>-<app12>` entry point wraps: `composition.app.<verb>`, and
+ * What each `composer-<key>-<app12>` entry point wraps: `composition.app.<verb>`,
+ * `schedule.app.<verb>` for `schedule-<verb>`, `run.app.steps` for `run-steps`, and
  * for `workspaces` / `workspace-switch` the person's workspaces
  * (`identity.end-user.organization.query` / `.switch`, input renamed `workspace_uuid`).
  */
 export const ENTRY_POINT_KEYS = ['validate', 'list', 'get', 'catalog', 'save-draft', 'publish', 'archive', 'publish-status', 'workspaces', 'workspace-switch',
-  'schedule-list', 'schedule-runs', 'schedule-create', 'schedule-update', 'schedule-pause', 'schedule-resume', 'schedule-delete'] as const
+  'schedule-list', 'schedule-runs', 'schedule-create', 'schedule-update', 'schedule-pause', 'schedule-resume', 'schedule-delete',
+  'schedule-run-now', 'run-steps'] as const
 export type EntryPointKey = (typeof ENTRY_POINT_KEYS)[number]
 /** The entry points every authoring-enabled app has. The workspace ones arrived later (identity v0.80.2), so they are optional. */
 export const AUTHORING_ENTRY_POINT_KEYS: readonly EntryPointKey[] = ['validate', 'list', 'get', 'catalog', 'save-draft', 'publish', 'archive', 'publish-status']
 
 /** `composer-<key>-<app12>`: the names the app's enablement publishes them under. */
-const ENTRY_POINT_NAME = /^composer-(validate|list|get|catalog|save-draft|publish-status|publish|archive|workspace-switch|workspaces|schedule-(?:list|runs|create|update|pause|resume|delete))-([0-9a-f]{12})$/
+const ENTRY_POINT_NAME = /^composer-(validate|list|get|catalog|save-draft|publish-status|publish|archive|workspace-switch|workspaces|run-steps|schedule-(?:list|runs|create|update|pause|resume|delete|run-now))-([0-9a-f]{12})$/
 
 /** One workflow the signed-in end user may start, as the app's exposed list names it. */
 export interface ExposedWorkflow { name: string; workflow_type: string }
@@ -387,7 +389,17 @@ const SYNONYMS: Record<string, ComposerErrorCode> = {
   schedule_interval_too_short: 'SCHEDULE_TOO_FREQUENT',
   schedule_quota_exceeded: 'QUOTA_EXCEEDED',
   schedule_manage_forbidden: 'CAPABILITY_REQUIRED',
+  schedule_publish_forbidden: 'CAPABILITY_REQUIRED',
+  run_not_found: 'NOT_FOUND',
+  composition_hidden_value: 'HIDDEN_VALUE',
+  composition_secret_unsafe: 'SECRET_UNSAFE',
 }
+
+/**
+ * Save checks the platform may report inside a broader refusal (a VALIDATION_FAILED whose
+ * findings name them): the specific code tells the person what to change.
+ */
+const SPECIFIC = /\b(composition_hidden_value|composition_secret_unsafe)\b/
 
 function codeOf(value: string | undefined): ComposerErrorCode | undefined {
   if (!value) return undefined
@@ -420,7 +432,10 @@ export function refusalOf(error: unknown): ComposerError {
   const output = [e.data, e.state_data].find(isObject) ?? {}
   const details = [e.failure_details, output.failure_details].find(isObject) ?? {}
   const prefix = /^\s*([A-Za-z][A-Za-z_]*):\s*([\s\S]*)$/.exec(message)
-  const code = codeOf(str(details.code)) ?? codeOf(str(e.code)) ?? codeOf(prefix?.[1]) ?? codeOf(/\b(schedule_[a-z_]+)\b/.exec(message)?.[1])
+  const broad = codeOf(str(details.code)) ?? codeOf(str(e.code)) ?? codeOf(prefix?.[1]) ?? codeOf(/\b(schedule_[a-z_]+|run_not_found)\b/.exec(message)?.[1])
+  const specific = !broad || broad === 'VALIDATION_FAILED' || broad === 'UNKNOWN'
+    ? codeOf(SPECIFIC.exec(`${message} ${JSON.stringify(details.findings ?? '')}`)?.[1]) : undefined
+  const code = specific ?? broad
   const fields: Json = { ...details }
   if (code) {
     const said = codeOf(prefix?.[1]) ? prefix?.[2]?.trim() : message
@@ -513,6 +528,48 @@ export function readScheduleRuns(out: unknown, workflowType: string): RunRow[] {
       source: 'schedule' as const,
     }
   })
+}
+
+/** `schedule.app.run-now`: `{routine, workflow_id, workflow_type}`, the one run it started. */
+export function readRunNow(out: unknown): { workflow_id: string; workflow_type: string | null } {
+  const o = unwrap(out, ['workflow_id'])
+  const id = str(o.workflow_id)
+  if (!id) throw new ComposerError('UNKNOWN', { detail: 'schedule.app.run-now returned no workflow_id' })
+  return { workflow_id: id, workflow_type: str(o.workflow_type) ?? null }
+}
+
+// ---- One run's steps (`run.app.steps`) ----
+
+/** Steps per `run.app.steps` page (the platform's maximum). */
+export const RUN_STEPS_PAGE = 200
+/** Pages read for one run (the platform reaches at most 500 steps). */
+export const RUN_STEPS_PAGES = 3
+
+export const runStepsInput = (workflowId: string, offset = 0): Json => ({ workflow_id: workflowId, limit: RUN_STEPS_PAGE, offset })
+
+const STEP_STATUS: Record<string, InspectorStep['status']> = {
+  pending: 'pending', running: 'running', completed: 'succeeded', succeeded: 'succeeded', success: 'succeeded', failed: 'failed',
+}
+
+/**
+ * A `run.app.steps` page: `{steps: [{step_name, workflow_type, status (pending|running|completed|failed|
+ * skipped|cancelled), error {code, message}, output_preview}], next_offset}`. A skipped or cancelled step
+ * never ran, so it counts as pending.
+ */
+export function readRunSteps(out: unknown): { steps: InspectorStep[]; next: number | null } {
+  const o = unwrap(out, ['steps'])
+  const steps = listIn(o, ['steps']).filter(isObject).map((r): InspectorStep => {
+    const error = isObject(r.error) ? r.error : {}
+    const preview = isObject(r.output_preview) ? r.output_preview : null
+    return {
+      step_name: str(r.step_name) ?? '',
+      workflow_type: str(r.workflow_type) ?? '',
+      status: STEP_STATUS[str(r.status) ?? ''] ?? 'pending',
+      ...(preview ? { output_keys: Object.keys(preview) } : {}),
+      ...(str(error.message) ?? str(error.code) ? { failure_reason: str(error.message) ?? str(error.code) } : {}),
+    }
+  }).filter((s) => s.step_name)
+  return { steps, next: num(o.next_offset) ?? null }
 }
 
 // ---- Helpers ----

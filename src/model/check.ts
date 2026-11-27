@@ -3,7 +3,7 @@
 // once the builder is wired to it.
 import type { Catalog, FieldType } from './catalog'
 import { compatible, fieldLabel, unknownEntry } from './catalog'
-import { SERVER_CONTROLLED } from './definition'
+import { holdsHiddenMarker, SERVER_CONTROLLED } from './definition'
 import { availableData, describeRef, loopsAround } from './data'
 import { compile, MAX_TEXT_CHIPS } from './compile'
 import {
@@ -102,9 +102,13 @@ export function check(recipe: Recipe, catalog: Catalog): Problem[] {
       for (const [field, value] of Object.entries(block.fields)) {
         const spec2 = spec.inputs.find((f) => f.name === field)
         checkValue(block.id, field, value, spec2?.type)
+        if (hidesValue(value)) add({ at: block.id, field, severity: 'error', message: HIDDEN_MESSAGE(fieldLabel(field)) })
       }
       for (const undo of block.undo) {
-        for (const [field, value] of Object.entries(undo.fields)) checkValue(block.id, field, value, undefined)
+        for (const [field, value] of Object.entries(undo.fields)) {
+          checkValue(block.id, field, value, undefined)
+          if (hidesValue(value)) add({ at: block.id, field, severity: 'error', message: HIDDEN_MESSAGE(`${undo.title || undo.name} › ${fieldLabel(field)}`) })
+        }
       }
       // Results from inside a For each are a list of every round; with several steps per round, each entry is that round's whole result.
       for (const ref of Object.values(block.fields).flatMap(refsOf)) {
@@ -186,6 +190,21 @@ export function check(recipe: Recipe, catalog: Catalog): Problem[] {
       if (ref.kind === 'item') add({ at, severity: 'error', message: 'A condition can’t check the current item of a For each' })
       else checkRef(at, ref, undefined, undefined)
     }
+  }
+}
+
+/** The platform hid this value when it showed the saved workflow; saving the placeholder is refused. */
+const HIDDEN_MESSAGE = (label: string) => `${label} holds a value the platform hides. Type it again (or keep it in the Vault) before saving`
+
+/** Whether a field's value is, or holds, the hidden-value marker (see definition.HIDDEN_MARKER). */
+function hidesValue(value: Value): boolean {
+  switch (value.kind) {
+    case 'literal': return holdsHiddenMarker(value.value)
+    // Text without data chips is saved as one fixed value.
+    case 'text': return value.parts.every((p) => typeof p === 'string') && holdsHiddenMarker(value.parts.join(''))
+    case 'object': return Object.values(value.fields).some(hidesValue)
+    case 'list': return value.items.some(hidesValue)
+    default: return false
   }
 }
 

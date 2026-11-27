@@ -82,6 +82,9 @@ export const api = {
   /** The shortest gap the backend's schedules allow, in minutes, and whether they take time expressions. */
   get scheduleRules() { return { minMinutes: b().schedules.minIntervalMinutes ?? 1, expressions: !!b().schedules.expressions } },
   setScheduleActive: (uuid: string, active: boolean) => b().schedules.setActive(uuid, active),
+  /** Whether the backend can run a schedule once, now (`ScheduleBackend.runNow`). */
+  get canRunScheduleNow() { return !!b().schedules.runNow },
+  runScheduleNow: (uuid: string): Promise<RunState> => b().schedules.runNow?.(uuid) ?? unsupported(t('run a schedule now')),
   deleteSchedule: (uuid: string) => b().schedules.remove(uuid),
   fieldOptions: (type: string, partial: Json): Promise<FieldDecision[]> => b().fieldOptions?.(type, partial) ?? Promise.resolve([]),
   get kind() { return b().kind },
@@ -682,6 +685,13 @@ export const builder = {
     builder.refreshFacts()
   },
 
+  /** Run a schedule once, now, with its own answers, and follow that run on the cards. */
+  async runScheduleNow(key: string, schedule: Schedule): Promise<void> {
+    const started = await api.runScheduleNow(schedule.schedule_uuid)
+    if (!started.workflow_id) throw new Error(t('The backend didn’t return a run id'))
+    await builder.follow(key, started.workflow_id, started.workflow_type ?? schedule.target_workflow_type, true)
+  },
+
   async deleteSchedule(key: string, scheduleUuid: string) {
     await api.deleteSchedule(scheduleUuid)
     await builder.loadSchedules(key)
@@ -708,7 +718,17 @@ export const builder = {
     const rank = { pending: 1, succeeded: 2, running: 3, failed: 4, unrecoverable: 4 } as const
     for (let i = 0; i < 2400; i++) {
       if (state.runs[key]?.workflowId !== workflowId) return
-      const [inspector, run] = await Promise.all([api.inspect(workflowId).catch(() => null), api.state(workflowId).catch(() => null)])
+      // An app's per-step read is a platform run of its own: read the state first, then the steps every
+      // third poll and always once the run has ended (so the last step's card shows how it finished).
+      const paced = api.kind === 'app'
+      let inspector: RunInspector | null
+      let run: RunState | null
+      if (paced) {
+        run = await api.state(workflowId).catch(() => null)
+        inspector = i % 3 === 0 || run?.is_terminal ? await api.inspect(workflowId).catch(() => null) : null
+      } else {
+        [inspector, run] = await Promise.all([api.inspect(workflowId).catch(() => null), api.state(workflowId).catch(() => null)])
+      }
       if (state.runs[key]?.workflowId !== workflowId) return
       if (inspector) {
         const steps: RunView['steps'] = {}

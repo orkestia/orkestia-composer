@@ -21,7 +21,7 @@ apps a way to let people build them without writing JSON.
 The package is not on npm yet. Install a release tarball from GitHub:
 
 ```bash
-pnpm add https://github.com/orkestia/orkestia-composer/releases/download/v0.1.2/orkestia-composer-0.1.2.tgz
+pnpm add https://github.com/orkestia/orkestia-composer/releases/download/v0.2.0/orkestia-composer-0.2.0.tgz
 ```
 
 The tarball is built and attached by the release workflow for every `v*` tag, so
@@ -112,7 +112,21 @@ publish entry point, when the workspace's `capabilities` say so, or after
 `run`). The step picker offers only the app's authorable steps.
 Schedules go through the app's `composer-schedule-<verb>-<app12>` entry points
 too; an app enabled before those existed gets them by running its authoring
-enablement again.
+enablement again. Two features switch on only when the app offers their entry
+point: **Run now** on a saved schedule (`composer-schedule-run-now-<app12>`,
+wrapping `schedule.app.run-now`), and each step's status on the cards while a
+run goes (`composer-run-steps-<app12>`, wrapping `run.app.steps`). Without them
+the editor hides Run now and shows a run's result without per-step status.
+Both are getters that appear after discovery, so pass the backend as it is: a
+spread copy (`{ ...appBackend(client) }`) loses them; wrap it with
+`Object.create(backend)` to add members.
+
+**Hidden values.** When the platform shows a saved composition it replaces the
+values it hides (a static `Authorization` header, a token) with `<hidden>`, and
+it refuses to save a definition that still carries that placeholder. The
+editor's checks flag each such field as an error before saving; hosts can use
+`hiddenValuePaths(definition)` from `@orkestia/composer/model` for the same
+check.
 
 Refusals reject with `ComposerError`: `error.code` is one of
 `AUTHORING_NOT_ENABLED`, `CAPABILITY_REQUIRED`, `VERSION_CONFLICT`,
@@ -121,8 +135,9 @@ Refusals reject with `ComposerError`: `error.code` is one of
 `NOT_FOUND`, `PUBLISH_IN_PROGRESS`, `VALIDATION_FAILED`, `IDEMPOTENCY_KEY_REUSED`,
 `PUBLISH_ABANDONED`, `INTERNAL_ERROR`, `end_user_principal_required`,
 `organization_mismatch` (or `TIMEOUT`,
-`PUBLISH_PENDING`, `ENTRY_POINT_MISSING`, `SCHEDULE_TOO_FREQUENT`, `UNKNOWN`),
-and `error.message` is translated.
+`PUBLISH_PENDING`, `ENTRY_POINT_MISSING`, `SCHEDULE_TOO_FREQUENT`, `HIDDEN_VALUE`
+for `composition_hidden_value`, `SECRET_UNSAFE` for `composition_secret_unsafe`,
+`UNKNOWN`), and `error.message` is translated.
 
 **Schedules** run every N minutes, or by five cron fields read in an IANA time
 zone (`0 9 * * 1-5` in `America/Sao_Paulo`). The editor shows the next five

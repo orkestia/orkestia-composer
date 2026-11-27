@@ -1,6 +1,9 @@
 // The backend for an app's end user, signed in with Orkestia: compositions of
 // the person's workspace, through the `composer-*` entry points the app's
-// authoring enablement publishes, and schedules through `schedule.app.*`.
+// authoring enablement publishes, schedules through `schedule.app.*`, and a
+// run's steps through `run.app.steps`. Run now and per-step results switch on
+// when the app offers their entry points (`composer-schedule-run-now-*`,
+// `composer-run-steps-*`).
 //
 //   const backend = appBackend(endUserClient)
 //   <CompositionEditor backend={backend} catalog={backend.catalog()} />
@@ -9,7 +12,7 @@
 import type { CompositionDefinition } from '../model/definition'
 import { MIN_APP_SCHEDULE_MINUTES, cadenceGapMinutes, type Cadence } from '../model/schedule'
 import type {
-  ComposerStorage, CompositionBackend, CompositionRow, Json, Lineage, ListFacts, PublishInput, PublishPending, PublishReceipt, RunRow, RunState, SaveOptions,
+  ComposerStorage, CompositionBackend, CompositionRow, InspectorStep, Json, Lineage, ListFacts, PublishInput, PublishPending, PublishReceipt, RunInspector, RunRow, RunState, SaveOptions,
   SaveResult, Schedule, ScheduleBackend, SchedulePatch, ValidateResult,
 } from '../ui/host'
 import { PlatformCatalog, type CatalogLabels } from './catalog'
@@ -65,9 +68,16 @@ export type AppBackend = Omit<CompositionBackend, 'catalog'> & {
 const TRACK_KEY = 'composer.app.runs.v1'
 const TRACK_LIMIT = 200
 
+/**
+ * `inspect` and `schedules.runNow` are getters that appear once discovery found their entry points.
+ * Pass the backend (and its `schedules`) as they are: a spread copy (`{ ...backend }`) taken before the
+ * first list keeps them undefined for good. To add members, wrap it with `Object.create(backend)`.
+ */
 export function appBackend(client: WorkflowsClientLike, options: AppBackendOptions = {}): AppBackend {
   const timeoutMs = options.timeoutMs ?? 60_000
   let discovered: Promise<Partial<Record<wire.EntryPointKey, string>>> | null = null
+  /** The entry points once discovery answered: optional features read it synchronously (absent until then). */
+  let known: Partial<Record<wire.EntryPointKey, string>> = options.entryPoints ?? {}
   let lineagesCache: Lineage[] = []
   /** workflow type ↔ lineage name + version, from every list read: schedules name their target by lineage. */
   const typeIndex = new Map<string, { name: string; version: number }>()
@@ -129,6 +139,7 @@ export function appBackend(client: WorkflowsClientLike, options: AppBackendOptio
       }
       const found = { ...wire.findEntryPoints(list, app12), ...given }
       offered = { publish: !!(found['save-draft'] && found.publish), draft: !!found['save-draft'] }
+      known = found
       return found
     })().catch((error) => { discovered = null; throw wire.refusalOf(error) })
     return discovered
@@ -206,7 +217,7 @@ export function appBackend(client: WorkflowsClientLike, options: AppBackendOptio
   /** A lineage by its name, or by the slug a new composition was named with. */
   const lineageNamed = (name: string) => lineagesCache.find((l) => l.name === name) ?? lineagesCache.find((l) => wire.slugOf(l.name) === name) ?? null
 
-  // ---- Runs the editor started, remembered locally (end users can't list runs yet) ----
+  // ---- Runs the editor started, remembered locally (end users can't list their runs) ----
 
   let tracked: RunRow[] = (() => {
     try { return JSON.parse(options.storage?.getItem(TRACK_KEY) ?? '[]') as RunRow[] } catch { return [] }
@@ -235,7 +246,27 @@ export function appBackend(client: WorkflowsClientLike, options: AppBackendOptio
     const wanted = target.version ?? (target.followsHead ? Math.max(...versions.map(([, v]) => v.version)) : null)
     return versions.find(([, v]) => v.version === wanted)?.[0]
   }
-  const rawSchedules = async () => wire.readScheduleList(await scheduleVerb('list', { limit: 200 }))
+  /** The last schedules read, by uuid: a run started now is filed under its schedule's target. */
+  const scheduleRows = new Map<string, Json>()
+  const rawSchedules = async () => {
+    const rows = wire.readScheduleList(await scheduleVerb('list', { limit: 200 }))
+    for (const raw of rows) if (typeof raw.schedule_uuid === 'string') scheduleRows.set(raw.schedule_uuid, raw)
+    return rows
+  }
+  const runNow = async (scheduleUuid: string): Promise<RunState> => {
+    const out = wire.readRunNow(await call('schedule-run-now', { routine: scheduleUuid }))
+    const raw = scheduleRows.get(scheduleUuid)
+    // The platform answers with the routine's target, which may be a lineage ORN: file the run under
+    // the version type the editor knows, so it shows among the composition's runs.
+    const type = (out.workflow_type && typeIndex.has(out.workflow_type) ? out.workflow_type : undefined)
+      ?? (raw ? typeOfTarget(wire.scheduleTarget(raw)) : undefined) ?? out.workflow_type ?? ''
+    tracked.unshift({
+      workflow_uuid: out.workflow_id, workflow_type: type, state_name: 'started', is_terminal: false, terminal_status: null,
+      created_at_iso: new Date().toISOString(), triggered_by: 'schedule', source: 'schedule',
+    })
+    keepTracked()
+    return { workflow_id: out.workflow_id, workflow_type: type, state_name: 'started', is_terminal: false }
+  }
   const assertCadence = (cadence: number | Cadence | null) => {
     if (cadence === null) return
     const c: Cadence = typeof cadence === 'number' ? { kind: 'interval', everyMinutes: cadence } : cadence
@@ -259,6 +290,25 @@ export function appBackend(client: WorkflowsClientLike, options: AppBackendOptio
     },
     setActive: (scheduleUuid, active) => scheduleVerb(active ? 'resume' : 'pause', { schedule_uuid: scheduleUuid }),
     remove: (scheduleUuid) => scheduleVerb('remove', { schedule_uuid: scheduleUuid }),
+    /** Only when the app offers `composer-schedule-run-now` (known after the first list). */
+    get runNow() { return known['schedule-run-now'] ? runNow : undefined },
+  }
+
+  /** A run's steps, page by page (`run.app.steps`), as one inspector layer: the cards map steps by name. */
+  const inspect = async (workflowId: string): Promise<RunInspector> => {
+    const steps: InspectorStep[] = []
+    let offset = 0
+    for (let page = 0; page < wire.RUN_STEPS_PAGES; page++) {
+      const { steps: got, next } = wire.readRunSteps(await call('run-steps', wire.runStepsInput(workflowId, offset)))
+      steps.push(...got)
+      if (next === null || next <= offset) break
+      offset = next
+    }
+    const run = tracked.find((r) => r.workflow_uuid === workflowId)
+    return {
+      workflow_id: workflowId, workflow_type: run?.workflow_type ?? '', state_name: run?.state_name ?? '',
+      terminal_status: run?.terminal_status ?? null, layers: [{ name: 'steps', index: 0, steps }],
+    }
   }
 
   let catalog: PlatformCatalog | null = null
@@ -355,6 +405,9 @@ export function appBackend(client: WorkflowsClientLike, options: AppBackendOptio
     },
 
     state: (workflowId) => client.state(workflowId),
+
+    /** Only when the app offers `composer-run-steps` (known after the first list): else runs show no per-step status. */
+    get inspect() { return known['run-steps'] ? inspect : undefined },
 
     async runs(workflowTypes, limit = 25, result = 'all') {
       const types = new Set(workflowTypes)
